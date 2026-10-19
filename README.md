@@ -49,6 +49,23 @@ privai evolve "añade logging a tools.py"
 privai rollback
 ```
 
+## Memoria y conocimiento de sí misma
+
+PrivAI recuerda entre sesiones. Todo se guarda en la carpeta `.privai/` dentro de tu proyecto:
+
+- **Historial**: las últimas 20 intervenciones de la conversación.
+- **Hechos**: lo que la IA decide guardar con la herramienta `remember` (tu nombre, tus preferencias...).
+
+Además sabe qué es: qué modelo usa, dónde está su código y a qué carpeta tiene acceso.
+
+```bash
+privai memoria   # ver lo que recuerda
+privai olvidar   # borrar memoria e historial
+```
+
+Esto **no** la hace consciente: nadie sabe cómo construir una IA consciente. Es memoria guardada
+en archivos de texto que se le vuelven a pasar al modelo en cada sesión.
+
 ## Configuración
 
 Edita `config.yaml`:

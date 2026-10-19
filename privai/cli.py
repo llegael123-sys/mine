@@ -23,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     p_evolve.add_argument("instruction", nargs="+")
     sub.add_parser("rollback", help="deshace la última auto-edición")
     sub.add_parser("status", help="muestra estado y últimos snapshots")
+    sub.add_parser("memoria", help="muestra lo que la IA recuerda")
+    sub.add_parser("olvidar", help="borra la memoria y el historial")
 
     args = parser.parse_args(argv)
     config = Config.load(args.config)
@@ -74,6 +76,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "status":
         print(agent.editor.status())
+        return 0
+
+    if args.command == "memoria":
+        print(agent.memory.facts() or "(no recuerdo nada todavía)")
+        return 0
+
+    if args.command == "olvidar":
+        print(agent.memory.forget())
         return 0
 
     return 1
