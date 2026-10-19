@@ -44,3 +44,13 @@ class LocalLLM:
             return resp.status_code == 200
         except requests.exceptions.RequestException:
             return False
+
+    def has_model(self) -> bool:
+        """Comprueba que el modelo configurado esté descargado en Ollama."""
+        try:
+            resp = requests.get(f"{self.host}/api/tags", timeout=5)
+            names = [m.get("name", "") for m in resp.json().get("models", [])]
+        except (requests.exceptions.RequestException, ValueError):
+            return False
+        wanted = self.model if ":" in self.model else f"{self.model}:latest"
+        return wanted in names

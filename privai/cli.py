@@ -37,6 +37,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    if args.command in {"chat", "ask", "evolve"} and not agent.llm.has_model():
+        print(
+            f"[error] El modelo '{config.model}' no está descargado.\n"
+            f"Ejecuta: ollama pull {config.model}",
+            file=sys.stderr,
+        )
+        return 2
+
     if args.command == "chat":
         print("PrivAI (local). Escribe 'salir' para terminar.")
         while True:
@@ -48,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
             if user.lower() in {"salir", "exit", "quit"}:
                 break
             if user:
+                print("(pensando... la primera respuesta puede tardar mientras carga el modelo)", flush=True)
                 print(agent.run(user))
         return 0
 
