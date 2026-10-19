@@ -36,7 +36,7 @@ class Toolbox:
         p = self._safe(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content)
-        return f"escrito {len(content)} caracteres en {path}"
+        return f"escrito {len(content)} caracteres en {p}"
 
     def list_dir(self, path: str = ".") -> str:
         p = self._safe(path)
