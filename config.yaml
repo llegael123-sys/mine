@@ -1,0 +1,8 @@
+# Configuración de PrivAI — todo local, nada sale de tu máquina.
+model: llama3.1                      # modelo local de Ollama (ollama pull llama3.1)
+ollama_host: http://localhost:11434  # endpoint local de Ollama
+workspace: .                         # raíz de archivos a la que el agente puede acceder
+allow_self_edit: true                # permitir que el agente modifique su propio código
+allow_shell: false                   # ejecutar comandos de shell (desactivado por seguridad)
+max_steps: 12                        # pasos máximos por tarea del agente
+temperature: 0.3

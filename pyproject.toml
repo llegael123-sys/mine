@@ -1,0 +1,19 @@
+[project]
+name = "privai"
+version = "0.1.0"
+description = "Asistente de IA local, privado y auto-editable (sin tokens, vía Ollama)"
+requires-python = ">=3.9"
+dependencies = [
+    "requests>=2.28",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+privai = "privai.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["privai*"]
