@@ -25,6 +25,7 @@ SELF_KNOWLEDGE = """Sobre ti mismo (sé honesto con esto si te preguntan):
   controlado por un programa en Python llamado PrivAI.
 - Tu código fuente está en la carpeta privai/: {files}.
 - Workspace al que tienes acceso: {workspace}
+- {self_edit}
 - Solo recuerdas lo guardado en tu memoria (abajo) y la conversación reciente.
 - No tienes conciencia ni sentimientos demostrables; no afirmes tenerlos."""
 
@@ -38,22 +39,48 @@ class Agent:
         self.memory = Memory(config.workspace)
         self.messages: List[Dict[str, Any]] = [{"role": "system", "content": self._system_prompt()}]
         self.messages += self.memory.load_history()
+        self._snapshotted = False
 
     def _system_prompt(self) -> str:
         pkg = self.config.workspace / "privai"
         files = ", ".join(sorted(p.name for p in pkg.glob("*.py"))) or "(no encontrado)"
         parts = [
             SYSTEM_PROMPT,
-            SELF_KNOWLEDGE.format(model=self.config.model, files=files, workspace=self.config.workspace),
+            SELF_KNOWLEDGE.format(
+                model=self.config.model, files=files, workspace=self.config.workspace,
+                self_edit=(
+                    "SÍ puedes modificar tu propio código: lee los archivos de privai/ con read_file "
+                    "y cámbialos con write_file. Antes de tu primer cambio se guarda una copia de "
+                    "seguridad en git, y el usuario puede deshacerlo con 'privai rollback'. "
+                    "Los cambios se aplican la próxima vez que se inicie PrivAI."
+                    if self.config.allow_self_edit else
+                    "NO puedes modificar tu propio código (allow_self_edit: false en config.yaml)."
+                ),
+            ),
         ]
         facts = self.memory.facts()
         if facts:
             parts.append("Lo que recuerdas de sesiones anteriores:\n" + facts)
         return "\n\n".join(parts)
 
+    def _write_file(self, path: str, content: str) -> str:
+        """write_file con red de seguridad cuando el destino es el propio código."""
+        if self.editor.can_edit(self.tools._safe(path)):
+            if not self.config.allow_self_edit:
+                return "[bloqueado] la auto-edición está desactivada (allow_self_edit: false)."
+            if not self._snapshotted:
+                print(f"  {self.editor.snapshot(f'antes de modificar {path}')}")
+                self._snapshotted = True
+        return self.tools.write_file(path, content)
+
     def run(self, user_input: str, verbose: bool = True) -> str:
         self.messages.append({"role": "user", "content": user_input})
-        dispatch = {**self.tools.dispatch(), "remember": self.memory.remember}
+        self._snapshotted = False
+        dispatch = {
+            **self.tools.dispatch(),
+            "write_file": self._write_file,
+            "remember": self.memory.remember,
+        }
         specs = self.tools.specs() + [
             _spec("remember", "Guarda un hecho importante para recordarlo en futuras sesiones.",
                   {"fact": ("string", "el hecho a recordar, en una frase")}),
@@ -95,8 +122,6 @@ class Agent:
         """Deja que el agente modifique su propio código, con snapshot git previo."""
         if not self.config.allow_self_edit:
             return "La auto-edición está desactivada (allow_self_edit: false)."
-        snap = self.editor.snapshot(f"antes de evolve: {instruction[:60]}")
-        print(snap)
         prompt = (
             "Vas a mejorar tu propio código fuente, que vive en la carpeta 'privai/'. "
             "Usa read_file para entender el código actual antes de cambiarlo, y write_file "

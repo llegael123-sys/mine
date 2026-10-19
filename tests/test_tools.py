@@ -40,20 +40,43 @@ def test_self_editor_can_edit_only_package(tmp_path: Path):
     assert not ed.can_edit(tmp_path / "otro" / "x.py")
 
 
-def test_rollback_only_reverts_own_snapshots(tmp_path: Path):
-    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp_path, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "t"], cwd=tmp_path, capture_output=True)
-    (tmp_path / "f.txt").write_text("v1")
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "trabajo del usuario"], cwd=tmp_path, capture_output=True)
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=True)
+
+
+def test_rollback_restores_only_own_code(tmp_path: Path):
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "t@t")
+    _git(tmp_path, "config", "user.name", "t")
+    pkg = tmp_path / "privai"
+    pkg.mkdir()
+    (pkg / "tools.py").write_text("v1")
+    (tmp_path / "notas.txt").write_text("trabajo del usuario")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-m", "inicio")
 
     ed = SelfEditor(tmp_path)
-    # no revierte commits que no son suyos
-    assert "no se revierte" in ed.rollback()
+    assert "No hay" in ed.rollback()
 
-    # crea un snapshot propio y sí lo revierte
-    (tmp_path / "f.txt").write_text("v2")
     ed.snapshot("prueba")
+    (pkg / "tools.py").write_text("v2 roto")
+    (pkg / "nuevo.py").write_text("x")
+    (tmp_path / "notas.txt").write_text("cambio sin guardar del usuario")
+
     ed.rollback()
-    assert (tmp_path / "f.txt").read_text() == "v1"
+    assert (pkg / "tools.py").read_text() == "v1"
+    assert not (pkg / "nuevo.py").exists()
+    # lo que está fuera de privai/ no se toca
+    assert (tmp_path / "notas.txt").read_text() == "cambio sin guardar del usuario"
+
+
+def test_snapshot_works_without_git_identity(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    _git(tmp_path, "init")
+    (tmp_path / "privai").mkdir()
+    (tmp_path / "privai" / "a.py").write_text("x")
+    SelfEditor(tmp_path).snapshot("sin identidad")
+    log = subprocess.run(["git", "log", "--format=%an %s"], cwd=tmp_path,
+                         capture_output=True, text=True).stdout
+    assert "PrivAI privai-snapshot: sin identidad" in log
