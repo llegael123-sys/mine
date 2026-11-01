@@ -17,6 +17,5 @@ echo  Iniciando la app de Herrajes...
 echo  NO CIERRES ESTA VENTANA mientras usen la app.
 echo  En el celular abri la direccion que dice "Red local".
 echo.
-start /b "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:3000"
-node server.js
+node server.js --abrir
 pause

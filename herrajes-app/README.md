@@ -46,6 +46,12 @@ Para empezar de cero, cerrá el servidor y borrá la carpeta `data/`.
 
 El tamaño del pallet se cambia en `server.js` (`const GRID = 3`).
 
+## Si ves una versión vieja (por ejemplo, el pallet de 9×9)
+
+1. Cerrá **todas** las ventanas negras de la app (si hay una vieja abierta, sigue mostrando lo viejo).
+2. Borrá las carpetas y los `.zip` viejos que bajaste, bajá el `.zip` de nuevo y extraelo.
+3. Abrí `ABRIR-APP-HERRAJES.bat`. Abajo de la pantalla de ingreso tiene que decir **"Versión 2 · pallets 3×3"**.
+
 ## Datos y respaldo
 
 Todo se guarda en `data/db.json`. Copiá ese archivo para hacer un respaldo.

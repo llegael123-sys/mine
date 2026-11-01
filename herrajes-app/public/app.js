@@ -3,6 +3,7 @@
 
 const $app = document.getElementById('app');
 const ROWS = 'ABCDEFGHI';
+const APP_VERSION = '2 · pallets 3×3';
 const STATUS = { pendiente: 'Pendiente', en_curso: 'En curso', completada: 'Completada' };
 
 let token = localStorage.getItem('token');
@@ -133,6 +134,7 @@ function viewLogin() {
         <label class="field"><span>Contraseña</span><input name="password" type="password" autocomplete="current-password" required></label>
         <button class="btn block big">Entrar</button>
       </form>
+      <p class="muted small center">Versión ${APP_VERSION}</p>
     </div>`;
   document.getElementById('f').onsubmit = async (e) => {
     e.preventDefault();
@@ -373,7 +375,8 @@ function viewAccount() {
         <label class="field"><span>Nueva contraseña</span><input type="password" name="next" autocomplete="new-password" minlength="4" required></label>
         <button class="btn block">Guardar</button>
       </form>
-      <button class="btn secondary block" onclick="logout()">Cerrar sesión</button>`,
+      <button class="btn secondary block" onclick="logout()">Cerrar sesión</button>
+      <p class="muted small center">Versión ${APP_VERSION}</p>`,
   });
   document.getElementById('pw').onsubmit = (e) => {
     e.preventDefault();

@@ -1,5 +1,5 @@
 // Service worker: guarda la app para que abra rápido. Los datos (/api) siempre van al servidor.
-const CACHE = 'herrajes-v1';
+const CACHE = 'herrajes-v2';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', (e) => {

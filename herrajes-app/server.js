@@ -13,6 +13,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const GRID = 3; // pallets de 3x3 (como un tateti)
+const VERSION = '2';
 const CELLS = GRID * GRID;
 
 // ---------- utilidades ----------
@@ -206,6 +207,7 @@ function snapshot(user) {
     pallets: db.pallets,
     tasks,
     grid: GRID,
+    version: VERSION,
   };
 }
 
@@ -442,8 +444,18 @@ module.exports = { createServer, loadDb, planPick, planTask };
 
 if (require.main === module) {
   loadDb();
-  createServer().listen(PORT, () => {
-    console.log(`\nApp de Herrajes funcionando.`);
+  const server = createServer();
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n  ATENCION: la app ya esta abierta en otra ventana negra (puerto ${PORT}).`);
+      console.error('  Cerra TODAS las ventanas negras de la app y volve a abrir ABRIR-APP-HERRAJES.bat.\n');
+    } else {
+      console.error(err);
+    }
+    process.exit(1);
+  });
+  server.listen(PORT, () => {
+    console.log(`\nApp de Herrajes funcionando (version ${VERSION}, pallets ${GRID}x${GRID}).`);
     console.log(`  En esta compu:  http://localhost:${PORT}`);
     for (const nets of Object.values(os.networkInterfaces())) {
       for (const n of nets || []) {
@@ -451,5 +463,13 @@ if (require.main === module) {
       }
     }
     console.log(`\nUsuario inicial: admin / admin123  (cambiá la contraseña al entrar)\n`);
+    if (process.argv.includes('--abrir')) openBrowser(`http://localhost:${PORT}`);
   });
+}
+
+// Abre el navegador de la compu (solo cuando se inicia con --abrir, desde el .bat).
+function openBrowser(url) {
+  const { exec } = require('child_process');
+  const cmd = process.platform === 'win32' ? `start "" "${url}"` : process.platform === 'darwin' ? `open "${url}"` : `xdg-open "${url}"`;
+  exec(cmd, () => {});
 }
