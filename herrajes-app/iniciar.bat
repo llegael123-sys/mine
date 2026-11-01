@@ -15,7 +15,7 @@ if errorlevel 1 (
 echo.
 echo  Iniciando la app de Herrajes...
 echo  NO CIERRES ESTA VENTANA mientras usen la app.
-echo  En el celular abri la direccion que dice "Red local".
+echo  Para el celular: escanea el QR que aparece en la compu, o usa la direccion de abajo.
 echo.
 node server.js --abrir
 pause

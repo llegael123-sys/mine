@@ -13,7 +13,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const GRID = 3; // pallets de 3x3 (como un tateti)
-const VERSION = '3';
+const VERSION = '4';
 const CELLS = GRID * GRID;
 
 // ---------- utilidades ----------
@@ -115,6 +115,17 @@ function saveDb() {
   const tmp = DB_FILE + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(db, null, 2));
   fs.renameSync(tmp, DB_FILE); // escritura atómica: no se corrompe si se corta la luz
+}
+
+// Direcciones de esta compu en la red local (para entrar desde el celular).
+// Primero las típicas de un WiFi de casa/negocio (192.168.x.x), después las demás.
+function lanAddresses() {
+  const rank = (ip) => (ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') ? 1 : ip.startsWith('172.') ? 2 : 3);
+  const ips = [];
+  for (const nets of Object.values(os.networkInterfaces())) {
+    for (const n of nets || []) if (n.family === 'IPv4' && !n.internal && !n.address.startsWith('169.254.')) ips.push(n.address);
+  }
+  return [...new Set(ips)].sort((a, b) => rank(a) - rank(b));
 }
 
 // ---------- sesiones ----------
@@ -261,6 +272,12 @@ const routes = [
   }],
 
   ['GET', /^\/api\/data$/, async (req, user) => snapshot(user)],
+
+  // Público: dirección para abrir la app desde el celular (se muestra con un QR)
+  ['GET', /^\/api\/info$/, async (req) => ({
+    urls: lanAddresses().map((ip) => `http://${ip}:${req.socket.localPort}`),
+    version: VERSION,
+  }), { public: true }],
 
   ['POST', /^\/api\/me\/password$/, async (req, user, _p, body) => {
     if (!checkPassword(user, body.current ?? '')) throw new HttpError(400, 'La contraseña actual no es correcta');
@@ -538,11 +555,10 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`\nApp de Herrajes funcionando (version ${VERSION}, pallets ${GRID}x${GRID}).`);
     console.log(`  En esta compu:  http://localhost:${PORT}`);
-    for (const nets of Object.values(os.networkInterfaces())) {
-      for (const n of nets || []) {
-        if (n.family === 'IPv4' && !n.internal) console.log(`  Red local:      http://${n.address}:${PORT}  (abrilo en el celular)`);
-      }
-    }
+    const ips = lanAddresses();
+    ips.forEach((ip, i) => console.log(`  ${i === 0 ? 'EN EL CELULAR:' : '   o probá:   '}  http://${ip}:${PORT}`));
+    if (!ips.length) console.log('  (La compu no está conectada a ninguna red: conectala al WiFi para usarla en el celular)');
+    console.log('  El celular tiene que estar en el mismo WiFi. También podés escanear el QR que aparece en la compu.');
     console.log(`\nUsuario inicial: admin / admin123  (cambiá la contraseña al entrar)\n`);
     if (process.argv.includes('--abrir')) openBrowser(`http://localhost:${PORT}`);
   });

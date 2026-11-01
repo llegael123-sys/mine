@@ -3,7 +3,7 @@
 
 const $app = document.getElementById('app');
 const ROWS = 'ABCDEFGHI';
-const APP_VERSION = '3 · pallets 3×3 · clientes y códigos';
+const APP_VERSION = '4';
 const STATUS = { pendiente: 'Pendiente', en_curso: 'En curso', completada: 'Completada' };
 
 let token = localStorage.getItem('token');
@@ -144,8 +144,10 @@ function viewLogin() {
         <label class="field"><span>Contraseña</span><input name="password" type="password" autocomplete="current-password" required></label>
         <button class="btn block big">Entrar</button>
       </form>
+      <div id="phone"></div>
       <p class="muted small center">Versión ${APP_VERSION}</p>
     </div>`;
+  if (onThisComputer()) phoneCard();
   document.getElementById('f').onsubmit = async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
@@ -445,14 +447,44 @@ function viewAccount() {
         <label class="field"><span>Nueva contraseña</span><input type="password" name="next" autocomplete="new-password" minlength="4" required></label>
         <button class="btn block">Guardar</button>
       </form>
+      <div id="phone"></div>
       <button class="btn secondary block" onclick="logout()">Cerrar sesión</button>
       <p class="muted small center">Versión ${APP_VERSION}</p>`,
   });
+  phoneCard();
   document.getElementById('pw').onsubmit = (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
     act(() => api('POST', '/api/me/password', { current: f.get('current'), next: f.get('next') }), 'Contraseña cambiada');
   };
+}
+
+// ---------- entrar desde el celular ----------
+const onThisComputer = () => ['localhost', '127.0.0.1', '::1', '[::1]'].includes(location.hostname);
+
+// Muestra la dirección para el celular y un QR para escanear con la cámara.
+async function phoneCard() {
+  let urls = [];
+  try { urls = (await (await fetch('/api/info')).json()).urls || []; } catch { /* sin conexión */ }
+  const el = document.getElementById('phone');
+  if (!el) return;
+  // Si ya estamos en un celular, la dirección que funciona es la que está usando.
+  if (!onThisComputer()) urls = [location.origin, ...urls.filter((u) => u !== location.origin)];
+  if (!urls.length) {
+    el.innerHTML = `<div class="card"><h2>📱 Entrar desde el celular</h2>
+      <p class="muted" style="margin:0">Esta compu no está conectada a ninguna red. Conectala al WiFi y volvé a abrir la app.</p></div>`;
+    return;
+  }
+  const [main, ...others] = urls;
+  el.innerHTML = `
+    <div class="card center phone-card">
+      <h2>📱 ${onThisComputer() ? 'Entrar desde el celular' : 'Para que otro entre desde su celular'}</h2>
+      <p class="muted small" style="margin-top:0">El celular tiene que estar conectado <b>al mismo WiFi</b> que la compu.</p>
+      <div class="qr">${QR.svg(main)}</div>
+      <p class="small" style="margin-bottom:4px">Apuntá la <b>cámara del celular</b> al código y tocá el link que aparece.<br>O escribí esto en Chrome:</p>
+      <div class="url">${esc(main)}</div>
+      ${others.length ? `<p class="muted small">Si no abre, probá con: ${others.map(esc).join(' · ')}</p>` : ''}
+    </div>`;
 }
 
 // ---------- modales ----------

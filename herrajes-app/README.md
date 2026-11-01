@@ -37,14 +37,22 @@ resaltado con el color del producto.
 
 Necesitás [Node.js](https://nodejs.org) 18 o más nuevo (no hace falta instalar nada más).
 
-1. En la compu del local: doble clic en **`iniciar.bat`** (Windows), o en una terminal:
-   ```bash
-   node server.js
-   ```
-2. En la pantalla aparece una dirección tipo `http://192.168.0.15:3000` (**Red local**).
-   Abrila en el navegador del celular (tiene que estar en el mismo WiFi).
-3. Para tenerla como app: en el menú del navegador, **"Agregar a pantalla de inicio"**.
-4. Entrá con **`admin` / `admin123`** y **cambiá la contraseña** desde ⚙︎ → Mi cuenta.
+1. En la compu del local: doble clic en **`ABRIR-APP-HERRAJES.bat`** (está en la carpeta de afuera),
+   o en una terminal: `node server.js`. **No cierres la ventana negra** mientras usen la app.
+2. Se abre la app en la compu. Abajo de donde se ingresa aparece **"📱 Entrar desde el celular"**
+   con un **código QR** y una dirección tipo `http://192.168.0.15:3000`.
+3. En el celular (conectado **al mismo WiFi** que la compu): abrí la **cámara**, apuntá al QR y tocá el link.
+   O abrí Chrome y escribí la dirección.
+4. Para tenerla como app: en el menú de Chrome (⋮), **"Agregar a pantalla de inicio"**.
+5. Entrá con **`admin` / `admin123`** y **cambiá la contraseña** desde ⚙︎ → Mi cuenta.
+
+Para que un empleado entre desde su celular, también podés mostrarle el QR que está en ⚙︎ → **Mi cuenta**.
+
+**Si el celular no abre la página:**
+- Fijate que el celular esté en el **mismo WiFi** que la compu (no con datos móviles, ni en la red de invitados).
+- La primera vez Windows pregunta por el **Firewall**: tocá **"Permitir acceso"**. Si lo cerraste sin aceptar,
+  buscá en Windows "Permitir una aplicación a través del Firewall" y tildá **Node.js** en **Privada**.
+- Revisá que la ventana negra siga abierta.
 
 Viene con datos de ejemplo (3 clientes, 9 productos con código, un pallet 3×3 con un color en cada casillero, el empleado `juan` / `1234` y un trabajo de *Carpintería López*).
 Para empezar de cero, cerrá el servidor y borrá la carpeta `data/`.
@@ -55,7 +63,7 @@ El tamaño del pallet se cambia en `server.js` (`const GRID = 3`).
 
 1. Cerrá **todas** las ventanas negras de la app (si hay una vieja abierta, sigue mostrando lo viejo).
 2. Borrá las carpetas y los `.zip` viejos que bajaste, bajá el `.zip` de nuevo y extraelo.
-3. Abrí `ABRIR-APP-HERRAJES.bat`. Abajo de la pantalla de ingreso tiene que decir **"Versión 3"**.
+3. Abrí `ABRIR-APP-HERRAJES.bat`. Abajo de la pantalla de ingreso tiene que decir **"Versión 4"**.
 
 ## Datos y respaldo
 
