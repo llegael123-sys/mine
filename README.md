@@ -1,3 +1,5 @@
+> **¿Buscás la app de Herrajes?** Está en la carpeta [`herrajes-app`](herrajes-app/). Para abrirla, hacé doble clic en **`ABRIR-APP-HERRAJES.bat`**. (El `iniciar.bat` de acá abre PrivAI, que es otro programa.)
+
 # PrivAI — asistente de IA local, privado y auto-editable
 
 PrivAI es un agente de IA que corre **100% en tu máquina**. No usa APIs de pago
