@@ -12,7 +12,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const GRID = 9; // pallets de 9x9
+const GRID = 3; // pallets de 3x3 (como un tateti)
 const CELLS = GRID * GRID;
 
 // ---------- utilidades ----------
@@ -52,13 +52,9 @@ function seed() {
     ['Cerradura de mueble', 'CER-MUE', 'Violeta', '#7c3aed'],
   ].map(([name, code, colorName, color]) => ({ id: newId(), name, code, colorName, color }));
 
-  // Pallet de ejemplo: cada fila es un producto/color distinto, 20 unidades por casillero.
-  const pallet = { id: newId(), name: 'Pallet A', cells: emptyCells() };
-  for (let r = 0; r < GRID; r++) {
-    for (let c = 0; c < GRID; c++) {
-      pallet.cells[r * GRID + c] = { productId: products[r].id, qty: 20 };
-    }
-  }
+  // Pallet de ejemplo: cada casillero tiene un producto/color distinto, 50 unidades cada uno.
+  const pallet = { id: newId(), name: 'Pallet A', location: 'Pasillo 1, a la izquierda, al fondo', cells: emptyCells() };
+  products.forEach((p, i) => { pallet.cells[i] = { productId: p.id, qty: 50 }; });
 
   const task = {
     id: newId(),
@@ -69,7 +65,7 @@ function seed() {
     status: 'pendiente',
     items: [
       { productId: products[0].id, qty: 5, picked: false, picks: [] },
-      { productId: products[2].id, qty: 30, picked: false, picks: [] },
+      { productId: products[2].id, qty: 12, picked: false, picks: [] },
       { productId: products[6].id, qty: 5, picked: false, picks: [] },
     ],
   };
@@ -80,6 +76,16 @@ function seed() {
 function loadDb() {
   if (fs.existsSync(DB_FILE)) {
     db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    // Si los pallets se guardaron con otro tamaño, los adapta al actual (conserva la esquina superior izquierda).
+    for (const p of db.pallets) {
+      const old = Math.round(Math.sqrt(p.cells.length));
+      if (old === GRID) continue;
+      const cells = emptyCells();
+      for (let r = 0; r < Math.min(old, GRID); r++) {
+        for (let c = 0; c < Math.min(old, GRID); c++) cells[r * GRID + c] = p.cells[r * old + c];
+      }
+      p.cells = cells;
+    }
   } else {
     db = seed();
     saveDb();
@@ -102,25 +108,43 @@ function publicUser(u) {
 
 // ---------- lógica de pedidos ----------
 // Decide de qué casilleros sacar `qty` unidades de un producto.
-// Prioriza los casilleros con menos stock para ir vaciando de a uno.
-function planPick(productId, qty) {
-  const sources = [];
+// Recorre los pallets en orden y cada pallet de A1 a I9, así el empleado vacía de a un casillero.
+// `reserved` (Map "palletId:cell" -> unidades) descuenta lo que ya se separó para otro ítem.
+function planPick(productId, qty, reserved = new Map()) {
+  const picks = [];
+  let available = 0;
+  let left = qty;
   for (const p of db.pallets) {
     p.cells.forEach((cell, index) => {
-      if (cell.productId === productId && cell.qty > 0) sources.push({ palletId: p.id, cell: index, have: cell.qty });
+      if (cell.productId !== productId) return;
+      const key = `${p.id}:${index}`;
+      const have = cell.qty - (reserved.get(key) || 0);
+      if (have <= 0) return;
+      available += have;
+      if (left <= 0) return;
+      const take = Math.min(left, have);
+      picks.push({ palletId: p.id, cell: index, qty: take });
+      left -= take;
     });
   }
-  sources.sort((a, b) => a.have - b.have);
-  const available = sources.reduce((s, x) => s + x.have, 0);
-  const picks = [];
-  let left = qty;
-  for (const s of sources) {
-    if (left <= 0) break;
-    const take = Math.min(left, s.have);
-    picks.push({ palletId: s.palletId, cell: s.cell, qty: take });
-    left -= take;
-  }
   return { picks, available, enough: left <= 0 };
+}
+
+// Plan de cada ítem pendiente de una tarea (null para los ya agarrados).
+// Si un producto aparece dos veces en el pedido, el segundo no usa lo reservado por el primero.
+function planTask(task) {
+  const reserved = new Map();
+  return task.items.map((item) => {
+    if (item.picked) return null;
+    const plan = planPick(item.productId, item.qty, reserved);
+    if (plan.enough) {
+      for (const pk of plan.picks) {
+        const key = `${pk.palletId}:${pk.cell}`;
+        reserved.set(key, (reserved.get(key) || 0) + pk.qty);
+      }
+    }
+    return plan;
+  });
 }
 
 // ---------- HTTP ----------
@@ -170,7 +194,11 @@ function findOr404(list, id, what) {
 }
 
 function snapshot(user) {
-  const tasks = user.role === 'admin' ? db.tasks : db.tasks.filter((t) => t.assignedTo === user.id);
+  const tasks = (user.role === 'admin' ? db.tasks : db.tasks.filter((t) => t.assignedTo === user.id)).map((t) => {
+    if (t.status === 'completada') return t;
+    const plans = planTask(t);
+    return { ...t, items: t.items.map((it, i) => (plans[i] ? { ...it, plan: plans[i] } : it)) };
+  });
   return {
     me: publicUser(user),
     users: db.users.map(publicUser),
@@ -272,7 +300,7 @@ const routes = [
   // --- pallets ---
   ['POST', /^\/api\/pallets$/, async (req, user, _p, body) => {
     requireAdmin(user);
-    const p = { id: newId(), name: str(body.name, 40) || `Pallet ${db.pallets.length + 1}`, cells: emptyCells() };
+    const p = { id: newId(), name: str(body.name, 40) || `Pallet ${db.pallets.length + 1}`, location: str(body.location, 120), cells: emptyCells() };
     db.pallets.push(p);
     return p;
   }],
@@ -281,6 +309,7 @@ const routes = [
     requireAdmin(user);
     const p = findOr404(db.pallets, id, 'Pallet');
     if (body.name !== undefined) p.name = str(body.name, 40) || p.name;
+    if (body.location !== undefined) p.location = str(body.location, 120);
     // body.cells: [{index, productId|null, qty}]
     if (Array.isArray(body.cells)) {
       for (const c of body.cells) {
@@ -325,21 +354,13 @@ const routes = [
     return { ok: true };
   }],
 
-  ['GET', /^\/api\/tasks\/(\w+)\/items\/(\d+)\/plan$/, async (req, user, [id, idx]) => {
-    const t = taskFor(user, id);
-    const item = t.items[Number(idx)];
-    if (!item) throw new HttpError(404, 'Ítem no encontrado');
-    if (item.picked) return { picks: item.picks, available: null, enough: true, done: true };
-    return planPick(item.productId, item.qty);
-  }],
-
   ['POST', /^\/api\/tasks\/(\w+)\/items\/(\d+)\/pick$/, async (req, user, [id, idx]) => {
     const t = taskFor(user, id);
     if (t.status === 'completada') throw new HttpError(400, 'La tarea ya está completada');
     const item = t.items[Number(idx)];
     if (!item) throw new HttpError(404, 'Ítem no encontrado');
     if (item.picked) throw new HttpError(400, 'Ese producto ya fue agarrado');
-    const plan = planPick(item.productId, item.qty);
+    const plan = planTask(t)[Number(idx)];
     if (!plan.enough) throw new HttpError(400, `No hay stock suficiente: hay ${plan.available} y se piden ${item.qty}`);
     for (const pk of plan.picks) {
       const cell = db.pallets.find((p) => p.id === pk.palletId).cells[pk.cell];
@@ -417,7 +438,7 @@ function createServer() {
   });
 }
 
-module.exports = { createServer, loadDb, planPick };
+module.exports = { createServer, loadDb, planPick, planTask };
 
 if (require.main === module) {
   loadDb();

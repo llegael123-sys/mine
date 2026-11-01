@@ -13,8 +13,10 @@ let draftItems = []; // ítems de la tarea que se está creando
 
 // ---------- helpers ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const cellName = (i) => `${ROWS[Math.floor(i / 9)]}${(i % 9) + 1}`;
+const N = () => data?.grid || 3; // tamaño del pallet: N x N (3x3, como un tateti)
+const cellName = (i) => `${ROWS[Math.floor(i / N())]}${(i % N()) + 1}`;
 const product = (id) => data.products.find((p) => p.id === id);
+const palletById = (id) => data.pallets.find((p) => p.id === id);
 const userName = (id) => data.users.find((u) => u.id === id)?.name || '—';
 const isAdmin = () => data?.me.role === 'admin';
 const fmtDate = (iso) => new Date(iso).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -90,20 +92,21 @@ function shell({ title, back, body, tab }) {
     <nav class="tabs">${tabs.map(([h, i, l]) => `<a href="${h}" class="${tab === h ? 'on' : ''}"><span class="ico">${i}</span>${l}</a>`).join('')}</nav>`;
 }
 
-// Dibuja un pallet 9x9. opts.take: Map(cellIndex -> cantidad a agarrar). opts.onCell: nombre de función global.
+// Dibuja un pallet N x N (3x3). opts.take: Map(cellIndex -> cantidad a agarrar). opts.onCell: nombre de función global.
 function palletGrid(pal, opts = {}) {
   const take = opts.take;
-  let html = `<div class="pallet ${take ? 'picking' : ''}"><div></div>`;
-  for (let c = 1; c <= 9; c++) html += `<div class="lbl">${c}</div>`;
+  const n = N();
+  let html = `<div class="pallet ${take ? 'picking' : ''}" style="--n:${n}"><div></div>`;
+  for (let c = 1; c <= n; c++) html += `<div class="lbl">${c}</div>`;
   pal.cells.forEach((cell, i) => {
-    if (i % 9 === 0) html += `<div class="lbl">${ROWS[i / 9]}</div>`;
+    if (i % n === 0) html += `<div class="lbl">${ROWS[i / n]}</div>`;
     const p = cell.productId && product(cell.productId);
     const hl = take && take.has(i);
     const style = p ? `background:${p.color};color:${textOn(p.color)}` : '';
     const title = p ? `${cellName(i)}: ${productLabel(p)} (${cell.qty} u.)` : `${cellName(i)}: vacío`;
-    const label = hl ? '' : opts.showQty && p ? cell.qty : '';
+    const label = hl ? '' : opts.showQty && p ? `<span class="cname">${esc(p.colorName || p.name)}</span><span class="cqty">${cell.qty}</span>` : '';
     html += `<button class="cell ${p ? '' : 'empty'} ${hl ? 'hl' : ''}" style="${style}" title="${esc(title)}" aria-label="${esc(title)}"
-      ${hl ? `data-take="${take.get(i)}"` : ''} ${opts.onCell ? `onclick="${opts.onCell}('${pal.id}', ${i})"` : ''}>${label}</button>`;
+      ${hl ? `data-take="${take.get(i)} u."` : ''} ${opts.onCell ? `onclick="${opts.onCell}('${pal.id}', ${i})"` : ''}>${label}</button>`;
   });
   return html + '</div>';
 }
@@ -176,23 +179,14 @@ function viewTasks() {
   });
 }
 
+// Pantalla del pedido: cada producto con cantidad, ubicación en el galpón y su pallet 3x3 resaltado.
 function viewTask(id) {
   const t = data.tasks.find((x) => x.id === id);
   if (!t) return go('#/tareas');
   const allPicked = t.items.every((i) => i.picked);
+  const pending = t.items.filter((i) => !i.picked).length;
 
-  const items = t.items.map((it, idx) => {
-    const p = product(it.productId);
-    const where = it.picked ? it.picks.map((pk) => `${esc(data.pallets.find((x) => x.id === pk.palletId)?.name || 'Pallet')} ${cellName(pk.cell)} (${pk.qty})`).join(', ') : '';
-    return `<a class="list-item" ${it.picked ? '' : `href="#/tarea/${t.id}/item/${idx}"`}>
-      <span class="swatch lg" style="background:${p?.color || '#ccc'}"></span>
-      <div class="grow">
-        <div class="title">${esc(productLabel(p))}</div>
-        <div class="muted small">${p?.code ? esc(p.code) + ' · ' : ''}${it.picked ? '✔ Agarrado de ' + where : 'Stock: ' + (p ? stockOf(p.id) : 0)}</div>
-      </div>
-      <div class="center"><div style="font-size:22px;font-weight:800">${it.qty}</div><div class="muted small">u.</div></div>
-      <span class="chev">${it.picked ? '✅' : '›'}</span></a>`;
-  }).join('');
+  const items = t.items.map((it, idx) => itemCard(t, it, idx)).join('');
 
   shell({
     title: t.title,
@@ -202,60 +196,55 @@ function viewTask(id) {
       <div class="card">
         <div class="row"><span class="badge ${t.status}">${STATUS[t.status]}</span><span class="muted small grow">👷 ${esc(userName(t.assignedTo))}</span><span class="muted small">${fmtDate(t.createdAt)}</span></div>
         ${t.notes ? `<p style="margin:10px 0 0;white-space:pre-wrap">${esc(t.notes)}</p>` : ''}
+        ${t.items.length ? `<p class="muted small" style="margin:10px 0 0">${pending ? `Faltan <b>${pending}</b> de ${t.items.length} productos` : 'Agarraste todos los productos ✔'}</p>` : ''}
       </div>
-      ${t.items.length ? `<div class="card"><h2>Pedido para armar</h2><p class="muted small" style="margin-top:0">Tocá cada producto para ver en qué casillero del pallet está.</p>${items}</div>` : ''}
-      ${t.status !== 'completada' ? `<button class="btn ok block big" ${allPicked ? '' : 'disabled'} onclick="completeTask('${t.id}')">✔ Marcar tarea como terminada</button>
-        ${!allPicked ? '<p class="muted small center">Se habilita cuando agarres todos los productos.</p>' : ''}` : `<p class="center muted">Terminada ${t.completedAt ? fmtDate(t.completedAt) : ''}</p>`}
+      ${items}
+      ${t.status !== 'completada' ? `<button class="btn ok block big" ${allPicked ? '' : 'disabled'} onclick="completeTask('${t.id}')">✔ Marcar pedido como terminado</button>
+        ${!allPicked ? '<p class="muted small center">Se habilita cuando agarres todos los productos.</p>' : ''}` : `<p class="center muted">Terminado ${t.completedAt ? fmtDate(t.completedAt) : ''}</p>`}
       ${isAdmin() ? `<button class="btn danger block" style="margin-top:20px" onclick="deleteTask('${t.id}')">Borrar tarea</button>` : ''}`,
   });
 }
 
-async function viewPick(taskId, idx) {
-  const t = data.tasks.find((x) => x.id === taskId);
-  const it = t?.items[idx];
-  if (!it) return go('#/tareas');
-  if (it.picked) return go('#/tarea/' + taskId);
-  const p = product(it.productId);
+function itemCard(t, it, idx) {
+  const p = product(it.productId) || { name: 'Producto borrado', color: '#ccc', colorName: '' };
+  const head = `
+    <div class="pick-target">
+      <span class="swatch lg" style="background:${p.color}"></span>
+      <div class="grow"><div class="title" style="font-weight:700">${esc(p.name)}</div>
+        <div class="muted small">Color: <b>${esc(p.colorName || '—')}</b>${p.code ? ' · ' + esc(p.code) : ''}</div></div>
+      <div class="center"><div class="pick-qty">${it.qty}</div><div class="muted small">unidades</div></div>
+    </div>`;
 
-  let plan;
-  try { plan = await api('GET', `/api/tasks/${taskId}/items/${idx}/plan`); }
-  catch (e) { toast(e.message, true); return; }
-  if (location.hash !== `#/tarea/${taskId}/item/${idx}`) return; // el usuario ya se fue
+  if (it.picked) {
+    const from = it.picks.map((pk) => `${esc(palletById(pk.palletId)?.name || 'Pallet')} ${cellName(pk.cell)} (${pk.qty})`).join(', ');
+    return `<div class="card item done">${head}<p class="small" style="margin:8px 0 0;color:var(--ok);font-weight:600">✅ Agarrado de ${from}</p></div>`;
+  }
 
-  // Agrupar por pallet
+  const plan = it.plan;
+  if (!plan || !plan.enough) {
+    return `<div class="card item">${head}
+      <p style="color:var(--bad);font-weight:600;margin-bottom:0">⚠ No hay stock suficiente: hay ${plan ? plan.available : 0} y se piden ${it.qty}. Avisale al encargado.</p></div>`;
+  }
+
+  // Un bloque por pallet: dónde está en el galpón, qué casilleros, y el pallet resaltado
   const byPallet = new Map();
   for (const pk of plan.picks) {
     if (!byPallet.has(pk.palletId)) byPallet.set(pk.palletId, new Map());
     byPallet.get(pk.palletId).set(pk.cell, pk.qty);
   }
-  const pallets = [...byPallet].map(([pid, take]) => {
-    const pal = data.pallets.find((x) => x.id === pid);
-    return `<div class="card"><h2>📦 ${esc(pal.name)}</h2><div class="pallet-wrap">${palletGrid(pal, { take })}</div></div>`;
-  }).join('');
-
-  const where = plan.picks.map((pk) => {
-    const pal = data.pallets.find((x) => x.id === pk.palletId);
-    return `<span class="pos">${cellName(pk.cell)}</span><span>${esc(pal.name)} · fila ${ROWS[Math.floor(pk.cell / 9)]}, columna ${(pk.cell % 9) + 1}</span><b>${pk.qty} u.</b>`;
-  }).join('');
-
-  shell({
-    title: 'Agarrar producto',
-    back: '#/tarea/' + taskId,
-    tab: '#/tareas',
-    body: `
-      <div class="card">
-        <div class="pick-target">
-          <span class="swatch lg" style="background:${p.color};width:60px;height:60px"></span>
-          <div class="grow"><div class="title" style="font-weight:700">${esc(p.name)}</div>
-            <div class="muted">Color: <b>${esc(p.colorName || '—')}</b>${p.code ? ' · ' + esc(p.code) : ''}</div></div>
-          <div class="center"><div class="pick-qty">${it.qty}</div><div class="muted small">unidades</div></div>
-        </div>
-        ${plan.enough ? `<div class="where">${where}</div>`
-          : `<p style="color:var(--bad);font-weight:600">⚠ No hay stock suficiente: hay ${plan.available} y se piden ${it.qty}. Avisale al encargado.</p>`}
+  const blocks = [...byPallet].map(([pid, take]) => {
+    const pal = palletById(pid);
+    const cells = [...take].map(([c, q]) => `<span class="pos">${cellName(c)}</span> <b>${q} u.</b>`).join('&nbsp;&nbsp; ');
+    return `
+      <div class="where-box">
+        <div>📍 <b>${esc(pal.location || 'Ubicación sin cargar')}</b></div>
+        <div class="muted small">${esc(pal.name)} · casillero: ${cells}</div>
       </div>
-      ${plan.enough ? pallets : ''}
-      <button class="btn ok block big" ${plan.enough ? '' : 'disabled'} onclick="confirmPick('${taskId}', ${idx})">✔ Ya lo agarré</button>`,
-  });
+      <div class="pallet-wrap">${palletGrid(pal, { take })}</div>`;
+  }).join('');
+
+  return `<div class="card item">${head}${blocks}
+    <button class="btn ok block big" style="margin-top:12px" ${t.status === 'completada' ? 'disabled' : ''} onclick="confirmPick('${t.id}', ${idx})">✔ Ya lo agarré</button></div>`;
 }
 
 function viewNewTask() {
@@ -315,7 +304,7 @@ function viewPallets(selectedId) {
         </div>
         <div class="row wrap" style="margin-top:10px">
           <button class="btn secondary small" onclick="fillPallet('${pal.id}')">Llenar todo el pallet</button>
-          <button class="btn secondary small" onclick="renamePallet('${pal.id}')">Renombrar</button>
+          <button class="btn secondary small" onclick="editPallet('${pal.id}')">Nombre y ubicación</button>
           <button class="btn danger small" onclick="deletePallet('${pal.id}')">Borrar pallet</button>
         </div>
       </div>`;
@@ -325,8 +314,9 @@ function viewPallets(selectedId) {
     title: 'Pallets',
     tab: '#/pallets',
     body: `
-      <div class="chips">${chips}${admin ? `<button class="chip" onclick="addPallet()">＋ Nuevo</button>` : ''}</div>
-      ${pal ? `<div class="card"><h2>${esc(pal.name)} <span class="muted small">(9×9)</span></h2>
+      <div class="chips">${chips}${admin ? `<button class="chip" onclick="editPallet()">＋ Nuevo</button>` : ''}</div>
+      ${pal ? `<div class="card"><h2>${esc(pal.name)} <span class="muted small">(${N()}×${N()})</span></h2>
+        <p class="muted" style="margin:-4px 0 10px">📍 ${esc(pal.location || 'Sin ubicación en el galpón')}</p>
         <div class="pallet-wrap">${palletGrid(pal, { showQty: true, onCell: admin ? 'paintCell' : 'showCell' })}</div>
         ${palletLegend(pal)}</div>${editor}`
         : `<div class="card empty"><div class="ico">🟫</div>No hay pallets cargados.</div>`}`,
@@ -493,7 +483,7 @@ function deleteTask(id) {
 }
 
 function confirmPick(taskId, idx) {
-  act(async () => { await api('POST', `/api/tasks/${taskId}/items/${idx}/pick`); return { goTo: '#/tarea/' + taskId }; }, '¡Listo! Stock descontado');
+  act(() => api('POST', `/api/tasks/${taskId}/items/${idx}/pick`), '¡Listo! Stock descontado');
 }
 
 function completeTask(id) {
@@ -506,22 +496,32 @@ function paintCell(palletId, i) {
 }
 
 function fillPallet(palletId) {
-  const msg = brush.productId ? `¿Llenar los 81 casilleros con ${productLabel(product(brush.productId))} (${brush.qty} c/u)?` : '¿Vaciar todo el pallet?';
+  const msg = brush.productId ? `¿Llenar los ${N() * N()} casilleros con ${productLabel(product(brush.productId))} (${brush.qty} c/u)?` : '¿Vaciar todo el pallet?';
   if (!confirm(msg)) return;
-  const cells = Array.from({ length: 81 }, (_, index) => ({ index, productId: brush.productId || null, qty: brush.qty }));
+  const cells = Array.from({ length: N() * N() }, (_, index) => ({ index, productId: brush.productId || null, qty: brush.qty }));
   act(() => api('PUT', '/api/pallets/' + palletId, { cells }), 'Pallet actualizado');
 }
 
-function addPallet() {
-  const name = prompt('Nombre del pallet', `Pallet ${String.fromCharCode(65 + data.pallets.length)}`);
-  if (name === null) return;
-  act(async () => { const p = await api('POST', '/api/pallets', { name }); return { goTo: '#/pallets/' + p.id }; }, 'Pallet creado');
-}
-
-function renamePallet(id) {
-  const pal = data.pallets.find((p) => p.id === id);
-  const name = prompt('Nuevo nombre', pal.name);
-  if (name) act(() => api('PUT', '/api/pallets/' + id, { name }));
+// Crear o editar un pallet: nombre y dónde está en el galpón.
+function editPallet(id) {
+  const pal = id ? palletById(id) : { name: `Pallet ${String.fromCharCode(65 + data.pallets.length)}`, location: '' };
+  const m = modal(`
+    <h2>${id ? 'Editar pallet' : 'Nuevo pallet'}</h2>
+    <form id="palf">
+      <label class="field"><span>Nombre</span><input name="name" value="${esc(pal.name)}" required></label>
+      <label class="field"><span>¿Dónde está en el galpón?</span><input name="location" value="${esc(pal.location || '')}" placeholder="Ej: Pasillo 2, a la derecha, al fondo"></label>
+      <button class="btn block">Guardar</button>
+    </form>`);
+  m.querySelector('#palf').onsubmit = (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    closeModal();
+    act(async () => {
+      if (id) return void (await api('PUT', '/api/pallets/' + id, body));
+      const p = await api('POST', '/api/pallets', body);
+      return { goTo: '#/pallets/' + p.id };
+    }, 'Pallet guardado');
+  };
 }
 
 function deletePallet(id) {
@@ -545,9 +545,16 @@ function startPolling() {
   pollTimer = setInterval(async () => {
     if (!token || document.hidden || document.querySelector('.modal-bg')) return;
     const h = location.hash;
-    if (h.startsWith('#/nueva-tarea') || h.startsWith('#/cuenta') || /\/item\//.test(h)) return;
+    if (h.startsWith('#/nueva-tarea') || h.startsWith('#/cuenta')) return;
     const before = JSON.stringify(data);
+    const known = new Set(data.tasks.map((t) => t.id));
     try { await refresh(); } catch { return; }
+    // Aviso cuando le llega un pedido nuevo al empleado
+    const nuevas = data.tasks.filter((t) => !known.has(t.id) && t.assignedTo === data.me.id);
+    if (nuevas.length) {
+      toast(`📦 Te llegó un pedido nuevo: ${nuevas[0].title}`);
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+    }
     if (JSON.stringify(data) !== before) render();
   }, 10000);
 }
@@ -558,7 +565,7 @@ function render() {
   const parts = (location.hash || '#/tareas').slice(2).split('/');
   closeModal();
   switch (parts[0]) {
-    case 'tarea': return parts[2] === 'item' ? viewPick(parts[1], Number(parts[3])) : viewTask(parts[1]);
+    case 'tarea': return viewTask(parts[1]);
     case 'nueva-tarea': return viewNewTask();
     case 'pallets': return viewPallets(parts[1]);
     case 'productos': return viewProducts();

@@ -1,7 +1,7 @@
 # Herrajes · App de depósito para el celular
 
 App para una empresa de herrajes: el encargado asigna **tareas / pedidos** a los empleados,
-y cada empleado ve en su celular **qué casillero del pallet (9×9) tiene que agarrar**,
+y cada empleado ve en su celular **qué casillero del pallet (3×3, como un tateti) tiene que agarrar**,
 resaltado con el color del producto.
 
 ## Qué hace
@@ -10,17 +10,22 @@ resaltado con el color del producto.
 - 👷 **Empleados**: crear cuentas (usuario + contraseña), cambiar contraseñas, borrar cuentas.
 - 🔩 **Productos**: nombre, código, nombre del color y color (ej: *Manija barral 128mm · Negro*).
   Cada producto + color es un producto distinto.
-- 🟫 **Pallets 9×9**: elegís un producto y una cantidad, y tocás los casilleros para cargarlos
-  (o "Llenar todo el pallet"). Las filas son **A–I** y las columnas **1–9**.
+- 🟫 **Pallets 3×3**: a cada pallet le ponés un nombre y **dónde está en el galpón**
+  (ej: *Pasillo 2, a la derecha, al fondo*). Elegís un producto y una cantidad, y tocás los
+  casilleros para cargarlos (o "Llenar todo el pallet"). Las filas son **A–C** y las columnas **1–3**.
   El stock de cada producto es la suma de sus casilleros.
 - 📋 **Tareas**: título, a quién se la asignás, indicaciones y la lista del pedido
   (ej: *5 unidades de Bisagra Níquel*). Ves el avance de cada tarea.
 
 **Empleado**
-- Ve solo **sus** tareas.
-- Abre el pedido, toca un producto y la app le muestra el pallet con los casilleros a agarrar
-  **resaltados y titilando**, con cuántas unidades sacar de cada uno (ej: `C1 → 20 u.`, `C2 → 10 u.`).
-- Toca **"Ya lo agarré"** y el stock se descuenta solo. Cuando agarró todo, marca la tarea como terminada.
+- Ve solo **sus** tareas, y le aparece un aviso (con vibración) cuando le llega un pedido nuevo.
+- Abre el pedido y, **en la misma pantalla**, cada producto muestra:
+  - **cuánto** agarrar (ej: *5 unidades*),
+  - **dónde está en el galpón** (ej: *📍 Pasillo 1, a la izquierda, al fondo · Pallet A*),
+  - el pallet **3×3 como un tateti** con el casillero de ese color **resaltado y titilando**,
+    y cuántas unidades sacar (ej: `A1 → 5 u.`).
+- Toca **"Ya lo agarré"** en cada producto y el stock se descuenta solo. Cuando agarró todo,
+  marca el pedido como terminado.
 - Si no hay stock suficiente, la app le avisa y no lo deja continuar.
 
 ## Cómo usarla
@@ -36,8 +41,10 @@ Necesitás [Node.js](https://nodejs.org) 18 o más nuevo (no hace falta instalar
 3. Para tenerla como app: en el menú del navegador, **"Agregar a pantalla de inicio"**.
 4. Entrá con **`admin` / `admin123`** y **cambiá la contraseña** desde ⚙︎ → Mi cuenta.
 
-Viene con datos de ejemplo (9 productos, un pallet lleno, el empleado `juan` / `1234` y un pedido).
+Viene con datos de ejemplo (9 productos, un pallet 3×3 con un color en cada casillero, el empleado `juan` / `1234` y un pedido).
 Para empezar de cero, cerrá el servidor y borrá la carpeta `data/`.
+
+El tamaño del pallet se cambia en `server.js` (`const GRID = 3`).
 
 ## Datos y respaldo
 

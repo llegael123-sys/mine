@@ -24,7 +24,7 @@ const { createServer, loadDb } = require('./server');
     assert.strictEqual((await call('POST', '/api/login', { username: 'admin', password: 'mal' })).status, 401);
     const admin = (await call('POST', '/api/login', { username: 'admin', password: 'admin123' })).body.token;
     let d = (await call('GET', '/api/data', null, admin)).body;
-    assert.strictEqual(d.pallets[0].cells.length, 81);
+    assert.strictEqual(d.pallets[0].cells.length, 9);
 
     // El admin crea un empleado y le asigna un pedido de 5 unidades
     const emp = (await call('POST', '/api/users', { username: 'ana', name: 'Ana', password: 'clave1' }, admin)).body;
@@ -38,8 +38,8 @@ const { createServer, loadDb } = require('./server');
     assert.deepStrictEqual(d.tasks.map((t) => t.id), [task.id]);
     assert.strictEqual((await call('POST', '/api/products', { name: 'x' }, ana)).status, 403);
 
-    // El plan resalta el casillero correcto
-    const plan = (await call('GET', `/api/tasks/${task.id}/items/0/plan`, null, ana)).body;
+    // El pedido ya trae dónde está cada producto (casillero a resaltar)
+    const plan = d.tasks[0].items[0].plan;
     assert.ok(plan.enough);
     assert.strictEqual(plan.picks.reduce((s, p) => s + p.qty, 0), 5);
     for (const pk of plan.picks) assert.strictEqual(d.pallets[0].cells[pk.cell].productId, prod.id);
@@ -61,6 +61,20 @@ const { createServer, loadDb } = require('./server');
     // Otro empleado no puede tocar tareas ajenas
     const juan = (await call('POST', '/api/login', { username: 'juan', password: '1234' })).body.token;
     assert.strictEqual((await call('POST', `/api/tasks/${big.id}/start`, null, juan)).status, 403);
+
+    // Mismo producto dos veces en un pedido: no se superponen casilleros y se agarra lo que se mostró
+    const pal = d.pallets[0];
+    await call('PUT', `/api/pallets/${pal.id}`, { location: 'Pasillo 3', cells: [0, 1].map((index) => ({ index, productId: prod.id, qty: 4 })) }, admin);
+    const dup = (await call('POST', '/api/tasks', { title: 'Doble', assignedTo: emp.id, items: [{ productId: prod.id, qty: 3 }, { productId: prod.id, qty: 3 }] }, admin)).body;
+    d = (await call('GET', '/api/data', null, ana)).body;
+    assert.strictEqual(d.pallets[0].location, 'Pasillo 3');
+    const [p1, p2] = d.tasks.find((t) => t.id === dup.id).items.map((i) => i.plan);
+    assert.deepStrictEqual(p1.picks.map((x) => [x.cell, x.qty]), [[0, 3]]);
+    assert.deepStrictEqual(p2.picks.map((x) => [x.cell, x.qty]), [[0, 1], [1, 2]]);
+    const picked = (await call('POST', `/api/tasks/${dup.id}/items/1/pick`, null, ana)).body; // fuera de orden
+    assert.deepStrictEqual(picked.items[1].picks, p2.picks);
+    d = (await call('GET', '/api/data', null, ana)).body;
+    assert.deepStrictEqual(d.tasks.find((t) => t.id === dup.id).items[0].plan.picks, p1.picks);
 
     console.log('OK: todas las pruebas pasaron');
   } finally {
