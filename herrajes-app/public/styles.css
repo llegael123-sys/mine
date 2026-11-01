@@ -76,7 +76,7 @@ textarea { min-height: 70px; resize: vertical; }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
 .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 99px; white-space: nowrap; }
-.badge.pendiente { background: #fef3c7; color: #92400e; }
+.badge.pendiente, .badge.disponible { background: #fef3c7; color: #92400e; }
 .badge.en_curso { background: #dbeafe; color: #1e40af; }
 .badge.completada { background: #dcfce7; color: #166534; }
 .badge.admin { background: #ede9fe; color: #5b21b6; }
@@ -188,3 +188,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); bo
   font: 800 19px ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: #fef3c7; border-radius: 10px;
   padding: 8px 10px; word-break: break-all; user-select: all;
 }
+
+/* Trabajo actual del empleado */
+.card.current { border: 2px solid var(--ok); cursor: pointer; }
+.card.current .client-name { font-size: 20px; font-weight: 800; margin: 2px 0; }

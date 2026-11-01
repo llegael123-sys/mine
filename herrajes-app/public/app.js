@@ -3,8 +3,8 @@
 
 const $app = document.getElementById('app');
 const ROWS = 'ABCDEFGHI';
-const APP_VERSION = '4';
-const STATUS = { pendiente: 'Pendiente', en_curso: 'En curso', completada: 'Completada' };
+const APP_VERSION = '5';
+const STATUS = { disponible: 'Disponible', en_curso: 'En curso', completada: 'Terminado', pendiente: 'Pendiente' };
 
 let token = localStorage.getItem('token');
 let data = null; // lo que devuelve /api/data
@@ -41,6 +41,14 @@ function findByCode(code) {
 const clientById = (id) => data.clients.find((c) => c.id === id);
 const clientName = (t) => clientById(t.clientId)?.name || t.clientName || t.title || 'Sin cliente';
 const byCode = (a, b) => a.code.localeCompare(b.code, 'es', { numeric: true });
+// Quién tiene el trabajo, en una línea corta
+function whoText(t) {
+  if (t.status === 'disponible') return '🙋 Disponible para cualquiera';
+  if (t.status === 'completada') return `✅ Lo hizo ${userName(t.assignedTo)}`;
+  return `👷 Lo está haciendo ${userName(t.assignedTo)}`;
+}
+const myActive = () => data.tasks.filter((t) => t.assignedTo === data.me.id && t.status === 'en_curso');
+const canTakeMore = () => myActive().length < (data.maxActive || 1);
 
 function stockOf(productId) {
   let n = 0;
@@ -164,6 +172,7 @@ function viewLogin() {
 }
 
 function viewTasks() {
+  if (!isAdmin()) return viewWorkerTasks();
   const filter = sessionStorage.getItem('taskFilter') || 'activas';
   let tasks = data.tasks;
   if (filter === 'activas') tasks = tasks.filter((t) => t.status !== 'completada');
@@ -172,62 +181,135 @@ function viewTasks() {
   const chips = [['activas', 'Activos'], ['completadas', 'Terminados'], ['todas', 'Todos']]
     .map(([k, l]) => `<button class="chip ${filter === k ? 'on' : ''}" onclick="sessionStorage.setItem('taskFilter','${k}');render()">${l}</button>`).join('');
 
-  const list = tasks.map((t) => {
-    const done = t.items.filter((i) => i.picked).length;
-    const pct = t.items.length ? Math.round((done / t.items.length) * 100) : 0;
-    return `<a class="list-item" href="#/tarea/${t.id}">
-      <div class="grow">
-        <div class="row"><span class="title grow">🏢 ${esc(clientName(t))}</span><span class="badge ${t.status}">${STATUS[t.status]}</span></div>
-        <div class="muted small">${t.title ? esc(t.title) + ' · ' : ''}${isAdmin() ? '👷 ' + esc(userName(t.assignedTo)) + ' · ' : ''}${t.items.length} producto(s) · ${fmtDate(t.createdAt)}</div>
-        ${t.items.length ? `<div class="progress"><div style="width:${pct}%"></div></div>` : ''}
-      </div><span class="chev">›</span></a>`;
-  }).join('');
-
   shell({
-    title: isAdmin() ? 'Trabajos' : 'Mis trabajos',
+    title: 'Trabajos',
     tab: '#/tareas',
     body: `
-      ${isAdmin() ? `<a class="btn block" href="#/nueva-tarea" style="margin-bottom:12px">＋ Nuevo trabajo para un cliente</a>` : ''}
+      <a class="btn block" href="#/nueva-tarea" style="margin-bottom:12px">＋ Nuevo trabajo para un cliente</a>
       <div class="chips">${chips}</div>
-      <div class="card">${list || `<div class="empty"><div class="ico">✅</div>${isAdmin() ? 'No hay trabajos acá.' : 'No tenés trabajos asignados.'}</div>`}</div>`,
+      <div class="card">${tasks.map((t) => taskRow(t)).join('') || '<div class="empty"><div class="ico">✅</div>No hay trabajos acá.</div>'}</div>`,
   });
 }
 
-// Pantalla del trabajo: de qué cliente es, y cada producto con código, cantidad, ubicación y su pallet resaltado.
+function taskRow(t, { takeButton = false } = {}) {
+  const done = t.items.filter((i) => i.picked).length;
+  const pct = t.items.length ? Math.round((done / t.items.length) * 100) : 0;
+  return `<div class="list-item" onclick="go('#/tarea/${t.id}')">
+    <div class="grow">
+      <div class="row"><span class="title grow">🏢 ${esc(clientName(t))}</span><span class="badge ${t.status}">${STATUS[t.status]}</span></div>
+      <div class="muted small">${t.title ? esc(t.title) + ' · ' : ''}${t.items.length} producto(s) · ${fmtDate(t.createdAt)}</div>
+      ${isAdmin() ? `<div class="small">${esc(whoText(t))}</div>` : ''}
+      ${t.status === 'en_curso' ? `<div class="progress"><div style="width:${pct}%"></div></div>` : ''}
+    </div>
+    ${takeButton ? `<button class="btn ok small" ${canTakeMore() ? '' : 'disabled'} onclick="event.stopPropagation();acceptTask('${t.id}')">✋ Tomar</button>` : '<span class="chev">›</span>'}
+  </div>`;
+}
+
+// Empleado: arriba su trabajo actual; abajo los disponibles para tomar.
+function viewWorkerTasks() {
+  const filter = sessionStorage.getItem('taskFilterEmp') || 'disponibles';
+  const mine = myActive();
+  const available = data.tasks.filter((t) => t.status === 'disponible');
+  const done = data.tasks.filter((t) => t.assignedTo === data.me.id && t.status === 'completada');
+
+  const current = mine.map((t) => {
+    const picked = t.items.filter((i) => i.picked).length;
+    return `<div class="card current" onclick="go('#/tarea/${t.id}')">
+      <div class="muted small" style="font-weight:700;color:var(--ok)">🟢 TU TRABAJO</div>
+      <div class="client-name">🏢 ${esc(clientName(t))}</div>
+      <div class="muted small">${t.title ? esc(t.title) + ' · ' : ''}${picked} de ${t.items.length} productos agarrados</div>
+      <div class="progress"><div style="width:${t.items.length ? Math.round((picked / t.items.length) * 100) : 0}%"></div></div>
+      <button class="btn ok block" style="margin-top:10px">Seguir armando ›</button>
+    </div>`;
+  }).join('');
+
+  const chips = [['disponibles', `Disponibles (${available.length})`], ['terminados', `Mis terminados (${done.length})`]]
+    .map(([k, l]) => `<button class="chip ${filter === k ? 'on' : ''}" onclick="sessionStorage.setItem('taskFilterEmp','${k}');render()">${l}</button>`).join('');
+
+  const list = filter === 'disponibles'
+    ? `${!canTakeMore() && available.length ? '<p class="muted small" style="margin:0 0 8px">Terminá tu trabajo para poder tomar otro.</p>' : ''}
+       ${available.map((t) => taskRow(t, { takeButton: true })).join('')
+         || '<div class="empty"><div class="ico">☕</div>No hay trabajos disponibles ahora.<br>Cuando el encargado cargue uno, te va a aparecer acá.</div>'}`
+    : done.map((t) => taskRow(t)).join('') || '<div class="empty">Todavía no terminaste trabajos.</div>';
+
+  shell({
+    title: 'Trabajos',
+    tab: '#/tareas',
+    body: `${current}<div class="chips">${chips}</div><div class="card">${list}</div>`,
+  });
+}
+
+// Pantalla del trabajo: de qué cliente es, quién lo hace, y sus productos.
 function viewTask(id) {
   const t = data.tasks.find((x) => x.id === id);
-  if (!t) return go('#/tareas');
+  if (!t) {
+    toast('Ese trabajo ya no está disponible (lo tomó otro empleado o se borró)', true);
+    return go('#/tareas');
+  }
+  const c = clientById(t.clientId);
+  const mine = t.assignedTo === data.me.id;
+  const canWork = t.status !== 'disponible' && (mine || isAdmin());
   const allPicked = t.items.every((i) => i.picked);
   const pending = t.items.filter((i) => !i.picked).length;
-  const c = clientById(t.clientId);
 
-  const items = t.items.map((it, idx) => itemCard(t, it, idx)).join('');
+  const header = `
+    <div class="card">
+      <div class="row"><span class="badge ${t.status}">${STATUS[t.status]}</span><span class="grow"></span><span class="muted small">${fmtDate(t.createdAt)}</span></div>
+      <div class="client-box">
+        <div class="client-name">🏢 ${esc(clientName(t))}</div>
+        ${t.title ? `<div class="muted">${esc(t.title)}</div>` : ''}
+        ${c?.phone ? `<div class="small">📞 <a href="tel:${esc(c.phone.replace(/[^0-9+]/g, ''))}">${esc(c.phone)}</a></div>` : ''}
+        ${c?.address ? `<div class="small">🏠 ${esc(c.address)}</div>` : ''}
+      </div>
+      <div class="small">${esc(mine && t.status === 'en_curso' ? '👷 Lo estás haciendo vos' : whoText(t))}</div>
+      ${t.notes ? `<p style="margin:10px 0 0;white-space:pre-wrap">📝 ${esc(t.notes)}</p>` : ''}
+      ${canWork && t.status === 'en_curso' ? `<p class="muted small" style="margin:10px 0 0">${pending ? `Faltan <b>${pending}</b> de ${t.items.length} productos` : 'Agarraste todos los productos ✔'}</p>` : ''}
+    </div>`;
+
+  let body;
+  if (t.status === 'disponible') {
+    // Todavía no es de nadie: se muestra qué lleva, y el botón para tomarlo
+    body = `
+      <div class="card"><h2>Productos (${t.items.length})</h2>${t.items.map(itemSummary).join('')}</div>
+      ${isAdmin()
+        ? '<p class="muted center">Esperando que un empleado lo tome.</p>'
+        : `<button class="btn ok block big" ${canTakeMore() ? '' : 'disabled'} onclick="acceptTask('${t.id}')">✋ Tomar este trabajo</button>
+           ${canTakeMore() ? '<p class="muted small center">Cuando lo tomás, desaparece de la lista de los demás.</p>' : '<p class="muted small center">Primero terminá el trabajo que ya tomaste.</p>'}`}`;
+  } else {
+    body = `
+      ${t.items.map((it, idx) => itemCard(t, it, idx, canWork)).join('')}
+      ${t.status !== 'completada' && canWork ? `<button class="btn ok block big" ${allPicked ? '' : 'disabled'} onclick="completeTask('${t.id}')">✔ Marcar trabajo como terminado</button>
+        ${!allPicked ? '<p class="muted small center">Se habilita cuando agarres todos los productos.</p>' : ''}` : ''}
+      ${t.status === 'completada' ? `<p class="center muted">Terminado ${t.completedAt ? fmtDate(t.completedAt) : ''}</p>` : ''}
+      ${t.status === 'en_curso' && mine && !isAdmin() && !t.items.some((i) => i.picked)
+        ? `<button class="btn secondary block" style="margin-top:14px" onclick="releaseTask('${t.id}')">Dejar este trabajo (vuelve a disponibles)</button>` : ''}
+      ${t.status === 'en_curso' && isAdmin()
+        ? `<button class="btn secondary block" style="margin-top:14px" onclick="releaseTask('${t.id}')">Liberar trabajo (vuelve a disponibles)</button>` : ''}`;
+  }
 
   shell({
     title: clientName(t),
     back: '#/tareas',
     tab: '#/tareas',
-    body: `
-      <div class="card">
-        <div class="row"><span class="badge ${t.status}">${STATUS[t.status]}</span><span class="grow"></span><span class="muted small">${fmtDate(t.createdAt)}</span></div>
-        <div class="client-box">
-          <div class="client-name">🏢 ${esc(clientName(t))}</div>
-          ${t.title ? `<div class="muted">${esc(t.title)}</div>` : ''}
-          ${c?.phone ? `<div class="small">📞 <a href="tel:${esc(c.phone.replace(/[^0-9+]/g, ''))}">${esc(c.phone)}</a></div>` : ''}
-          ${c?.address ? `<div class="small">🏠 ${esc(c.address)}</div>` : ''}
-        </div>
-        <div class="small">👷 Lo hace: <b>${esc(userName(t.assignedTo))}</b></div>
-        ${t.notes ? `<p style="margin:10px 0 0;white-space:pre-wrap">📝 ${esc(t.notes)}</p>` : ''}
-        ${t.items.length ? `<p class="muted small" style="margin:10px 0 0">${pending ? `Faltan <b>${pending}</b> de ${t.items.length} productos` : 'Agarraste todos los productos ✔'}</p>` : ''}
-      </div>
-      ${items}
-      ${t.status !== 'completada' ? `<button class="btn ok block big" ${allPicked ? '' : 'disabled'} onclick="completeTask('${t.id}')">✔ Marcar trabajo como terminado</button>
-        ${!allPicked ? '<p class="muted small center">Se habilita cuando agarres todos los productos.</p>' : ''}` : `<p class="center muted">Terminado ${t.completedAt ? fmtDate(t.completedAt) : ''}</p>`}
+    body: `${header}${body}
       ${isAdmin() ? `<button class="btn danger block" style="margin-top:20px" onclick="deleteTask('${t.id}')">Borrar trabajo</button>` : ''}`,
   });
 }
 
-function itemCard(t, it, idx) {
+// Renglón compacto de un producto (para ver un trabajo antes de tomarlo)
+function itemSummary(it) {
+  const p = product(it.productId) || { code: '¿?', name: 'Producto borrado', color: '#ccc', colorName: '' };
+  const lacking = it.plan && !it.plan.enough;
+  return `<div class="list-item">
+    <span class="swatch lg" style="background:${p.color}"></span>
+    <div class="grow"><span class="code">${esc(p.code)}</span>
+      <div class="title">${esc(p.name)}</div>
+      <div class="muted small">${esc(p.colorName || '')}${lacking ? ' · <b style="color:var(--bad)">⚠ falta stock</b>' : ''}</div></div>
+    <div class="center"><div style="font-size:24px;font-weight:800">${it.qty}</div><div class="muted small">u.</div></div>
+  </div>`;
+}
+
+function itemCard(t, it, idx, canWork = true) {
   const p = product(it.productId) || { code: '¿?', name: 'Producto borrado', color: '#ccc', colorName: '' };
   const head = `
     <div class="pick-target">
@@ -267,13 +349,12 @@ function itemCard(t, it, idx) {
   }).join('');
 
   return `<div class="card item">${head}${blocks}
-    <button class="btn ok block big" style="margin-top:12px" ${t.status === 'completada' ? 'disabled' : ''} onclick="confirmPick('${t.id}', ${idx})">✔ Ya lo agarré</button></div>`;
+    ${canWork ? `<button class="btn ok block big" style="margin-top:12px" ${t.status === 'completada' ? 'disabled' : ''} onclick="confirmPick('${t.id}', ${idx})">✔ Ya lo agarré</button>` : ''}</div>`;
 }
 
 function viewNewTask() {
   if (!isAdmin()) return go('#/tareas');
   const saved = JSON.parse(sessionStorage.getItem('draftForm') || '{}');
-  const people = data.users.map((u) => `<option value="${u.id}">${esc(u.name)}${u.role === 'admin' ? ' (admin)' : ''}</option>`).join('');
   const clients = [...data.clients].sort((a, b) => a.name.localeCompare(b.name, 'es'))
     .map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
   const codes = [...data.products].sort(byCode)
@@ -302,7 +383,6 @@ function viewNewTask() {
           </div>
         </div>
         <label class="field"><span>Referencia (opcional)</span><input name="title" placeholder="Ej: Pedido Nº 1002" value="${esc(saved.title || '')}"></label>
-        <label class="field"><span>Lo hace</span><select name="assignedTo">${people}</select></label>
         <label class="field"><span>Indicaciones (opcional)</span><textarea name="notes" placeholder="Ej: dejar en la mesa de despacho">${esc(saved.notes || '')}</textarea></label>
       </form>
       <div class="card">
@@ -318,13 +398,10 @@ function viewNewTask() {
         <button class="btn secondary block" onclick="addDraftItem()">＋ Agregar producto</button>
         <datalist id="codes">${codes}</datalist>
       </div>
-      <button class="btn block big" onclick="createTask()">Asignar trabajo</button>`,
+      <button class="btn block big" onclick="createTask()">📢 Publicar trabajo</button>
+      <p class="muted small center">Les aparece a todos los empleados y lo hace el primero que lo tome.</p>`,
   });
-  const f = document.getElementById('f');
-  if (saved.clientId) f.clientId.value = saved.clientId;
-  const firstEmp = data.users.find((u) => u.role === 'empleado');
-  if (saved.assignedTo) f.assignedTo.value = saved.assignedTo;
-  else if (firstEmp) f.assignedTo.value = firstEmp.id;
+  if (saved.clientId) document.getElementById('f').clientId.value = saved.clientId;
 }
 
 function viewPallets(selectedId) {
@@ -418,11 +495,11 @@ function viewClients() {
 function viewEmployees() {
   if (!isAdmin()) return go('#/tareas');
   const list = data.users.map((u) => {
-    const active = data.tasks.filter((t) => t.assignedTo === u.id && t.status !== 'completada').length;
+    const active = data.tasks.filter((t) => t.assignedTo === u.id && t.status === 'en_curso').length;
     return `<div class="list-item" onclick="editUser('${u.id}')">
       <span class="swatch lg center" style="background:#e5e7eb;display:flex;align-items:center;justify-content:center;font-size:22px">${u.role === 'admin' ? '🧑‍💼' : '👷'}</span>
       <div class="grow"><div class="title">${esc(u.name)} ${u.role === 'admin' ? '<span class="badge admin">admin</span>' : ''}</div><div class="muted small">usuario: ${esc(u.username)}</div></div>
-      <div class="center"><div style="font-weight:800">${active}</div><div class="muted small">trabajos</div></div>
+      <div class="center"><div style="font-weight:800">${active}</div><div class="muted small">en curso</div></div>
     </div>`;
   }).join('');
   shell({
@@ -566,7 +643,7 @@ function editClient(id, onCreated) {
     </form>
     ${id ? `<h2 style="margin-top:18px">Trabajos de este cliente</h2>
       ${jobs.map((t) => `<a class="list-item" href="#/tarea/${t.id}"><div class="grow"><b>${esc(t.title || 'Trabajo')}</b>
-        <div class="muted small">👷 ${esc(userName(t.assignedTo))} · ${t.items.length} producto(s) · ${fmtDate(t.createdAt)}</div></div>
+        <div class="muted small">${esc(whoText(t))} · ${t.items.length} producto(s) · ${fmtDate(t.createdAt)}</div></div>
         <span class="badge ${t.status}">${STATUS[t.status]}</span></a>`).join('') || '<p class="muted">Todavía no tiene trabajos.</p>'}
       <button type="button" class="btn danger block" style="margin-top:14px" id="del">Borrar cliente</button>` : ''}`);
   m.querySelector('#cf').onsubmit = (e) => {
@@ -646,7 +723,27 @@ function createTask() {
     draftItems = [];
     sessionStorage.removeItem('draftForm');
     return { goTo: '#/tarea/' + t.id };
-  }, 'Trabajo asignado');
+  }, 'Trabajo publicado: ya les aparece a los empleados');
+}
+
+// Tomar un trabajo. Si otro lo tomó antes, avisa y actualiza la lista.
+async function acceptTask(id) {
+  try {
+    await api('POST', `/api/tasks/${id}/accept`);
+    await refresh();
+    toast('✋ ¡Trabajo tomado! Ahora es tuyo');
+    if (location.hash !== '#/tarea/' + id) go('#/tarea/' + id); else render();
+  } catch (e) {
+    toast(e.message, true);
+    try { await refresh(); } catch { /* sin conexión */ }
+    render();
+  }
+}
+
+function releaseTask(id) {
+  const msg = isAdmin() ? '¿Liberar este trabajo? Vuelve a aparecerles a todos los empleados.' : '¿Dejar este trabajo? Vuelve a aparecerles a todos.';
+  if (!confirm(msg)) return;
+  act(async () => { await api('POST', `/api/tasks/${id}/release`); return { goTo: isAdmin() ? '#/tarea/' + id : '#/tareas' }; }, 'Trabajo liberado');
 }
 
 function deleteTask(id) {
@@ -712,7 +809,7 @@ function logout(silent) {
   viewLogin();
 }
 
-// Actualiza los datos cada 10 s para ver tareas nuevas, sin molestar si estás escribiendo.
+// Actualiza los datos cada 5 s para ver trabajos nuevos (y los que tomaron otros), sin molestar si estás escribiendo.
 function startPolling() {
   clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
@@ -723,13 +820,13 @@ function startPolling() {
     const known = new Set(data.tasks.map((t) => t.id));
     try { await refresh(); } catch { return; }
     // Aviso cuando le llega un pedido nuevo al empleado
-    const nuevas = data.tasks.filter((t) => !known.has(t.id) && t.assignedTo === data.me.id);
+    const nuevas = isAdmin() ? [] : data.tasks.filter((t) => !known.has(t.id) && t.status === 'disponible');
     if (nuevas.length) {
-      toast(`📦 Te llegó un trabajo nuevo: ${clientName(nuevas[0])}`);
+      toast(nuevas.length === 1 ? `📦 Hay un trabajo nuevo: ${clientName(nuevas[0])}` : `📦 Hay ${nuevas.length} trabajos nuevos`);
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
     }
     if (JSON.stringify(data) !== before) render();
-  }, 10000);
+  }, 5000);
 }
 
 // ---------- router ----------

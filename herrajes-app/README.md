@@ -1,6 +1,7 @@
 # Herrajes · App de depósito para el celular
 
-App para una empresa de herrajes: el encargado carga **trabajos de cada cliente** y se los asigna a un empleado,
+App para una empresa de herrajes: el encargado publica **trabajos de cada cliente**, les aparecen **a todos los empleados**
+y cada uno **toma** el que quiere,
 y cada empleado ve en su celular **qué casillero del pallet (3×3, como un tateti) tiene que agarrar**,
 resaltado con el color del producto.
 
@@ -17,13 +18,20 @@ resaltado con el color del producto.
   casilleros para cargarlos (o "Llenar todo el pallet"). Las filas son **A–C** y las columnas **1–3**.
   El stock de cada producto es la suma de sus casilleros.
 - 📋 **Trabajos**: cada trabajo es **de un cliente**. Elegís el cliente (o lo creás ahí mismo),
-  una referencia opcional (ej: *Pedido Nº 1002*), **qué empleado lo hace** y los productos:
-  escribís el **código** y la cantidad (ej: `BIS-35` × 5). Si el código no existe, la app te avisa.
-  Ves el avance de cada trabajo.
+  una referencia opcional (ej: *Pedido Nº 1002*) y los productos: escribís el **código** y la cantidad
+  (ej: `BIS-35` × 5). Si el código no existe, la app te avisa. Al tocar **"Publicar trabajo"**
+  les aparece a todos los empleados. **No se asigna a nadie**: lo hace el que lo toma.
+  En la lista ves si cada trabajo está **disponible**, **quién lo está haciendo** o **quién lo terminó**.
+  Si hace falta, podés **liberar** un trabajo para que vuelva a estar disponible.
 
 **Empleado**
-- Ve solo **sus** trabajos, con el nombre del cliente, y le aparece un aviso (con vibración) cuando le llega uno nuevo.
-- Abre el trabajo y ve **de qué cliente es** (con teléfono y dirección). En la misma pantalla, cada producto muestra:
+- Ve la lista de **trabajos disponibles** (de todos los clientes) y le aparece un aviso con vibración cuando se publica uno nuevo.
+  Puede abrir un trabajo para ver qué productos lleva antes de tomarlo.
+- Toca **"✋ Tomar"**: el trabajo pasa a ser suyo y **desaparece de la lista de los demás**.
+  Si dos lo tocan a la vez, se lo queda el primero y al otro le avisa *"Ese trabajo ya lo tomó Juan"*.
+- Cada empleado tiene **un trabajo por vez**: para tomar otro, primero termina el que tiene
+  (se cambia en `server.js`, `MAX_ACTIVE_PER_EMPLOYEE`). Si lo tomó por error y no agarró nada todavía, lo puede **dejar**.
+- En su trabajo ve **de qué cliente es** (con teléfono y dirección). En la misma pantalla, cada producto muestra:
   - el **código** del producto (ej: `COR-45`), el nombre y el color,
   - **cuánto** agarrar (ej: *5 unidades*),
   - **dónde está en el galpón** (ej: *📍 Pasillo 1, a la izquierda, al fondo · Pallet A*),
@@ -54,7 +62,7 @@ Para que un empleado entre desde su celular, también podés mostrarle el QR que
   buscá en Windows "Permitir una aplicación a través del Firewall" y tildá **Node.js** en **Privada**.
 - Revisá que la ventana negra siga abierta.
 
-Viene con datos de ejemplo (3 clientes, 9 productos con código, un pallet 3×3 con un color en cada casillero, el empleado `juan` / `1234` y un trabajo de *Carpintería López*).
+Viene con datos de ejemplo (3 clientes, 9 productos con código, un pallet 3×3 con un color en cada casillero, el empleado `juan` / `1234` y un trabajo disponible de *Carpintería López*).
 Para empezar de cero, cerrá el servidor y borrá la carpeta `data/`.
 
 El tamaño del pallet se cambia en `server.js` (`const GRID = 3`).
@@ -63,7 +71,7 @@ El tamaño del pallet se cambia en `server.js` (`const GRID = 3`).
 
 1. Cerrá **todas** las ventanas negras de la app (si hay una vieja abierta, sigue mostrando lo viejo).
 2. Borrá las carpetas y los `.zip` viejos que bajaste, bajá el `.zip` de nuevo y extraelo.
-3. Abrí `ABRIR-APP-HERRAJES.bat`. Abajo de la pantalla de ingreso tiene que decir **"Versión 4"**.
+3. Abrí `ABRIR-APP-HERRAJES.bat`. Abajo de la pantalla de ingreso tiene que decir **"Versión 5"**.
 
 ## Datos y respaldo
 

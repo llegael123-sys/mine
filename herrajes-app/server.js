@@ -13,7 +13,9 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const GRID = 3; // pallets de 3x3 (como un tateti)
-const VERSION = '4';
+const VERSION = '5';
+// Cuántos trabajos sin terminar puede tener tomados un empleado a la vez.
+const MAX_ACTIVE_PER_EMPLOYEE = 1;
 const CELLS = GRID * GRID;
 
 // ---------- utilidades ----------
@@ -69,9 +71,9 @@ function seed() {
     clientName: clients[0].name,
     title: 'Pedido Nº 1001',
     notes: 'Armar y dejar en la mesa de despacho.',
-    assignedTo: juan.id,
+    assignedTo: null,
     createdAt: new Date().toISOString(),
-    status: 'pendiente',
+    status: 'disponible',
     items: [
       { productId: products[0].id, qty: 5, picked: false, picks: [] },
       { productId: products[2].id, qty: 12, picked: false, picks: [] },
@@ -86,6 +88,11 @@ function loadDb() {
   if (fs.existsSync(DB_FILE)) {
     db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
     db.clients = db.clients || [];
+    // Estados viejos: "pendiente" pasa a "en curso" si alguien lo tenía, o a "disponible" si no.
+    for (const t of db.tasks) {
+      if (t.status === 'pendiente') t.status = t.assignedTo ? 'en_curso' : 'disponible';
+      if (t.status === 'en_curso' && !db.users.some((u) => u.id === t.assignedTo)) { t.status = 'disponible'; t.assignedTo = null; }
+    }
     // Todo producto necesita un código único: a los que no tienen se les inventa uno.
     const used = new Set();
     db.products.forEach((p, i) => {
@@ -239,7 +246,8 @@ function findOr404(list, id, what) {
 }
 
 function snapshot(user) {
-  const tasks = (user.role === 'admin' ? db.tasks : db.tasks.filter((t) => t.assignedTo === user.id)).map((t) => {
+  const visible = user.role === 'admin' ? db.tasks : db.tasks.filter((t) => t.status === 'disponible' || t.assignedTo === user.id);
+  const tasks = visible.map((t) => {
     if (t.status === 'completada') return t;
     const plans = planTask(t);
     return { ...t, items: t.items.map((it, i) => (plans[i] ? { ...it, plan: plans[i] } : it)) };
@@ -253,6 +261,7 @@ function snapshot(user) {
     tasks,
     grid: GRID,
     version: VERSION,
+    maxActive: MAX_ACTIVE_PER_EMPLOYEE,
   };
 }
 
@@ -316,6 +325,7 @@ const routes = [
     findOr404(db.users, id, 'Empleado');
     db.users = db.users.filter((u) => u.id !== id);
     for (const [t, uid] of sessions) if (uid === id) sessions.delete(t);
+    for (const t of db.tasks) if (t.assignedTo === id && t.status === 'en_curso') { t.assignedTo = null; t.status = 'disponible'; }
     return { ok: true };
   }],
 
@@ -422,13 +432,12 @@ const routes = [
     return { ok: true };
   }],
 
-  // --- tareas / pedidos ---
+  // --- trabajos ---
+  // Se publican para todos los empleados; cada uno toma ("acepta") el que quiere.
   ['POST', /^\/api\/tasks$/, async (req, user, _p, body) => {
     requireAdmin(user);
     const client = db.clients.find((c) => c.id === body.clientId);
     if (!client) throw new HttpError(400, 'Elegí de qué cliente es el trabajo');
-    const assignee = db.users.find((u) => u.id === body.assignedTo);
-    if (!assignee) throw new HttpError(400, 'Elegí qué empleado lo hace');
     // Cada producto se pide por código (también se acepta el id interno)
     const items = (Array.isArray(body.items) ? body.items : []).map((i) => {
       const p = i.code !== undefined ? productByCode(i.code) : db.products.find((x) => x.id === i.productId);
@@ -440,8 +449,8 @@ const routes = [
     if (!items.length) throw new HttpError(400, 'Agregá al menos un producto');
     const t = {
       id: newId(), clientId: client.id, clientName: client.name, title: str(body.title, 120),
-      notes: str(body.notes, 1000), assignedTo: assignee.id,
-      createdAt: new Date().toISOString(), status: 'pendiente', items,
+      notes: str(body.notes, 1000), assignedTo: null,
+      createdAt: new Date().toISOString(), status: 'disponible', items,
     };
     db.tasks.unshift(t);
     return t;
@@ -456,6 +465,7 @@ const routes = [
 
   ['POST', /^\/api\/tasks\/(\w+)\/items\/(\d+)\/pick$/, async (req, user, [id, idx]) => {
     const t = taskFor(user, id);
+    requireWorker(user, t);
     if (t.status === 'completada') throw new HttpError(400, 'El trabajo ya está terminado');
     const item = t.items[Number(idx)];
     if (!item) throw new HttpError(404, 'Ítem no encontrado');
@@ -471,29 +481,62 @@ const routes = [
     item.picks = plan.picks;
     item.pickedAt = new Date().toISOString();
     item.pickedBy = user.id;
-    if (t.status === 'pendiente') t.status = 'en_curso';
     return t;
   }],
 
   ['POST', /^\/api\/tasks\/(\w+)\/complete$/, async (req, user, [id]) => {
     const t = taskFor(user, id);
+    requireWorker(user, t);
     if (t.items.some((i) => !i.picked)) throw new HttpError(400, 'Faltan productos por agarrar');
     t.status = 'completada';
     t.completedAt = new Date().toISOString();
     return t;
   }],
 
-  ['POST', /^\/api\/tasks\/(\w+)\/start$/, async (req, user, [id]) => {
+  // Tomar un trabajo disponible. Si dos lo tocan a la vez, gana el primero.
+  ['POST', /^\/api\/tasks\/(\w+)\/accept$/, async (req, user, [id]) => {
+    const t = findOr404(db.tasks, id, 'Trabajo');
+    if (t.status === 'completada') throw new HttpError(400, 'Ese trabajo ya está terminado');
+    if (t.assignedTo === user.id) return t;
+    if (t.assignedTo) throw new HttpError(409, `Ese trabajo ya lo tomó ${db.users.find((u) => u.id === t.assignedTo)?.name || 'otro empleado'}`);
+    const mine = db.tasks.filter((x) => x.assignedTo === user.id && x.status === 'en_curso').length;
+    if (mine >= MAX_ACTIVE_PER_EMPLOYEE) {
+      throw new HttpError(400, MAX_ACTIVE_PER_EMPLOYEE === 1 ? 'Primero terminá el trabajo que ya tomaste' : `Ya tenés ${mine} trabajos sin terminar`);
+    }
+    t.assignedTo = user.id;
+    t.status = 'en_curso';
+    t.acceptedAt = new Date().toISOString();
+    return t;
+  }],
+
+  // Soltar un trabajo: vuelve a aparecerles a todos. El empleado solo puede si todavía no agarró nada.
+  ['POST', /^\/api\/tasks\/(\w+)\/release$/, async (req, user, [id]) => {
     const t = taskFor(user, id);
-    if (t.status === 'pendiente') t.status = 'en_curso';
+    if (t.status !== 'en_curso') throw new HttpError(400, 'Ese trabajo no lo tiene nadie');
+    if (user.role !== 'admin') {
+      if (t.assignedTo !== user.id) throw new HttpError(403, 'Este trabajo no es tuyo');
+      if (t.items.some((i) => i.picked)) throw new HttpError(400, 'Ya agarraste productos de este trabajo: pedile al encargado que lo libere');
+    }
+    t.assignedTo = null;
+    t.status = 'disponible';
+    delete t.acceptedAt;
     return t;
   }],
 ];
 
+// Un empleado puede ver los trabajos disponibles y los que tomó él.
 function taskFor(user, id) {
   const t = findOr404(db.tasks, id, 'Trabajo');
-  if (user.role !== 'admin' && t.assignedTo !== user.id) throw new HttpError(403, 'Este trabajo no es tuyo');
+  if (user.role !== 'admin' && t.status !== 'disponible' && t.assignedTo !== user.id) {
+    throw new HttpError(403, 'Ese trabajo ya lo tomó otro empleado');
+  }
   return t;
+}
+
+// Para agarrar productos o terminar, el trabajo tiene que estar tomado por vos (el admin puede siempre).
+function requireWorker(user, t) {
+  if (user.role === 'admin') return;
+  if (t.assignedTo !== user.id) throw new HttpError(400, 'Primero tomá este trabajo');
 }
 
 async function handleApi(req, res, pathname) {
