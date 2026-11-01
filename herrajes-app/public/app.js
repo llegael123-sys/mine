@@ -3,14 +3,14 @@
 
 const $app = document.getElementById('app');
 const ROWS = 'ABCDEFGHI';
-const APP_VERSION = '2 · pallets 3×3';
+const APP_VERSION = '3 · pallets 3×3 · clientes y códigos';
 const STATUS = { pendiente: 'Pendiente', en_curso: 'En curso', completada: 'Completada' };
 
 let token = localStorage.getItem('token');
 let data = null; // lo que devuelve /api/data
 let pollTimer = null;
 let brush = { productId: '', qty: 20 }; // pincel del editor de pallets
-let draftItems = []; // ítems de la tarea que se está creando
+let draftItems = []; // productos del trabajo que se está creando: [{productId, qty}]
 
 // ---------- helpers ----------
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -29,8 +29,18 @@ function textOn(hex) {
 }
 
 function productLabel(p) {
-  return p ? `${p.name}${p.colorName ? ' · ' + p.colorName : ''}` : 'Producto borrado';
+  return p ? `${p.code} · ${p.name}${p.colorName ? ' · ' + p.colorName : ''}` : 'Producto borrado';
 }
+
+// Busca un producto por su código, sin importar mayúsculas o espacios ("bis-35 " encuentra "BIS-35").
+function findByCode(code) {
+  const c = String(code || '').trim().toUpperCase().replace(/\s+/g, ' ');
+  return c ? data.products.find((p) => p.code === c) : undefined;
+}
+
+const clientById = (id) => data.clients.find((c) => c.id === id);
+const clientName = (t) => clientById(t.clientId)?.name || t.clientName || t.title || 'Sin cliente';
+const byCode = (a, b) => a.code.localeCompare(b.code, 'es', { numeric: true });
 
 function stockOf(productId) {
   let n = 0;
@@ -81,8 +91,8 @@ function go(hash) { location.hash = hash; }
 // ---------- layout ----------
 function shell({ title, back, body, tab }) {
   const tabs = isAdmin()
-    ? [['#/tareas', '📋', 'Tareas'], ['#/pallets', '🟫', 'Pallets'], ['#/productos', '🔩', 'Productos'], ['#/empleados', '👷', 'Empleados']]
-    : [['#/tareas', '📋', 'Mis tareas'], ['#/pallets', '🟫', 'Pallets'], ['#/cuenta', '👤', 'Cuenta']];
+    ? [['#/tareas', '📋', 'Trabajos'], ['#/clientes', '🏢', 'Clientes'], ['#/productos', '🔩', 'Productos'], ['#/pallets', '🟫', 'Pallets'], ['#/empleados', '👷', 'Empleados']]
+    : [['#/tareas', '📋', 'Mis trabajos'], ['#/pallets', '🟫', 'Pallets'], ['#/cuenta', '👤', 'Cuenta']];
   $app.innerHTML = `
     <header class="topbar">
       ${back ? `<button class="back" onclick="go('${back}')" aria-label="Volver">‹</button>` : ''}
@@ -157,7 +167,7 @@ function viewTasks() {
   if (filter === 'activas') tasks = tasks.filter((t) => t.status !== 'completada');
   if (filter === 'completadas') tasks = tasks.filter((t) => t.status === 'completada');
 
-  const chips = [['activas', 'Activas'], ['completadas', 'Completadas'], ['todas', 'Todas']]
+  const chips = [['activas', 'Activos'], ['completadas', 'Terminados'], ['todas', 'Todos']]
     .map(([k, l]) => `<button class="chip ${filter === k ? 'on' : ''}" onclick="sessionStorage.setItem('taskFilter','${k}');render()">${l}</button>`).join('');
 
   const list = tasks.map((t) => {
@@ -165,55 +175,64 @@ function viewTasks() {
     const pct = t.items.length ? Math.round((done / t.items.length) * 100) : 0;
     return `<a class="list-item" href="#/tarea/${t.id}">
       <div class="grow">
-        <div class="row"><span class="title grow">${esc(t.title)}</span><span class="badge ${t.status}">${STATUS[t.status]}</span></div>
-        <div class="muted small">${isAdmin() ? '👷 ' + esc(userName(t.assignedTo)) + ' · ' : ''}${t.items.length} producto(s) · ${fmtDate(t.createdAt)}</div>
+        <div class="row"><span class="title grow">🏢 ${esc(clientName(t))}</span><span class="badge ${t.status}">${STATUS[t.status]}</span></div>
+        <div class="muted small">${t.title ? esc(t.title) + ' · ' : ''}${isAdmin() ? '👷 ' + esc(userName(t.assignedTo)) + ' · ' : ''}${t.items.length} producto(s) · ${fmtDate(t.createdAt)}</div>
         ${t.items.length ? `<div class="progress"><div style="width:${pct}%"></div></div>` : ''}
       </div><span class="chev">›</span></a>`;
   }).join('');
 
   shell({
-    title: isAdmin() ? 'Tareas' : 'Mis tareas',
+    title: isAdmin() ? 'Trabajos' : 'Mis trabajos',
     tab: '#/tareas',
     body: `
-      ${isAdmin() ? `<a class="btn block" href="#/nueva-tarea" style="margin-bottom:12px">＋ Nueva tarea / pedido</a>` : ''}
+      ${isAdmin() ? `<a class="btn block" href="#/nueva-tarea" style="margin-bottom:12px">＋ Nuevo trabajo para un cliente</a>` : ''}
       <div class="chips">${chips}</div>
-      <div class="card">${list || `<div class="empty"><div class="ico">✅</div>${isAdmin() ? 'No hay tareas acá.' : 'No tenés tareas asignadas.'}</div>`}</div>`,
+      <div class="card">${list || `<div class="empty"><div class="ico">✅</div>${isAdmin() ? 'No hay trabajos acá.' : 'No tenés trabajos asignados.'}</div>`}</div>`,
   });
 }
 
-// Pantalla del pedido: cada producto con cantidad, ubicación en el galpón y su pallet 3x3 resaltado.
+// Pantalla del trabajo: de qué cliente es, y cada producto con código, cantidad, ubicación y su pallet resaltado.
 function viewTask(id) {
   const t = data.tasks.find((x) => x.id === id);
   if (!t) return go('#/tareas');
   const allPicked = t.items.every((i) => i.picked);
   const pending = t.items.filter((i) => !i.picked).length;
+  const c = clientById(t.clientId);
 
   const items = t.items.map((it, idx) => itemCard(t, it, idx)).join('');
 
   shell({
-    title: t.title,
+    title: clientName(t),
     back: '#/tareas',
     tab: '#/tareas',
     body: `
       <div class="card">
-        <div class="row"><span class="badge ${t.status}">${STATUS[t.status]}</span><span class="muted small grow">👷 ${esc(userName(t.assignedTo))}</span><span class="muted small">${fmtDate(t.createdAt)}</span></div>
-        ${t.notes ? `<p style="margin:10px 0 0;white-space:pre-wrap">${esc(t.notes)}</p>` : ''}
+        <div class="row"><span class="badge ${t.status}">${STATUS[t.status]}</span><span class="grow"></span><span class="muted small">${fmtDate(t.createdAt)}</span></div>
+        <div class="client-box">
+          <div class="client-name">🏢 ${esc(clientName(t))}</div>
+          ${t.title ? `<div class="muted">${esc(t.title)}</div>` : ''}
+          ${c?.phone ? `<div class="small">📞 <a href="tel:${esc(c.phone.replace(/[^0-9+]/g, ''))}">${esc(c.phone)}</a></div>` : ''}
+          ${c?.address ? `<div class="small">🏠 ${esc(c.address)}</div>` : ''}
+        </div>
+        <div class="small">👷 Lo hace: <b>${esc(userName(t.assignedTo))}</b></div>
+        ${t.notes ? `<p style="margin:10px 0 0;white-space:pre-wrap">📝 ${esc(t.notes)}</p>` : ''}
         ${t.items.length ? `<p class="muted small" style="margin:10px 0 0">${pending ? `Faltan <b>${pending}</b> de ${t.items.length} productos` : 'Agarraste todos los productos ✔'}</p>` : ''}
       </div>
       ${items}
-      ${t.status !== 'completada' ? `<button class="btn ok block big" ${allPicked ? '' : 'disabled'} onclick="completeTask('${t.id}')">✔ Marcar pedido como terminado</button>
+      ${t.status !== 'completada' ? `<button class="btn ok block big" ${allPicked ? '' : 'disabled'} onclick="completeTask('${t.id}')">✔ Marcar trabajo como terminado</button>
         ${!allPicked ? '<p class="muted small center">Se habilita cuando agarres todos los productos.</p>' : ''}` : `<p class="center muted">Terminado ${t.completedAt ? fmtDate(t.completedAt) : ''}</p>`}
-      ${isAdmin() ? `<button class="btn danger block" style="margin-top:20px" onclick="deleteTask('${t.id}')">Borrar tarea</button>` : ''}`,
+      ${isAdmin() ? `<button class="btn danger block" style="margin-top:20px" onclick="deleteTask('${t.id}')">Borrar trabajo</button>` : ''}`,
   });
 }
 
 function itemCard(t, it, idx) {
-  const p = product(it.productId) || { name: 'Producto borrado', color: '#ccc', colorName: '' };
+  const p = product(it.productId) || { code: '¿?', name: 'Producto borrado', color: '#ccc', colorName: '' };
   const head = `
     <div class="pick-target">
       <span class="swatch lg" style="background:${p.color}"></span>
-      <div class="grow"><div class="title" style="font-weight:700">${esc(p.name)}</div>
-        <div class="muted small">Color: <b>${esc(p.colorName || '—')}</b>${p.code ? ' · ' + esc(p.code) : ''}</div></div>
+      <div class="grow"><div class="code big">${esc(p.code)}</div>
+        <div class="title" style="font-weight:700">${esc(p.name)}</div>
+        <div class="muted small">Color: <b>${esc(p.colorName || '—')}</b></div></div>
       <div class="center"><div class="pick-qty">${it.qty}</div><div class="muted small">unidades</div></div>
     </div>`;
 
@@ -251,39 +270,59 @@ function itemCard(t, it, idx) {
 
 function viewNewTask() {
   if (!isAdmin()) return go('#/tareas');
-  const people = data.users.map((u) => `<option value="${u.id}">${esc(u.name)}${u.role === 'admin' ? ' (admin)' : ''}</option>`).join('');
-  const prodOpts = (sel) => data.products.map((p) => `<option value="${p.id}" ${p.id === sel ? 'selected' : ''}>${esc(productLabel(p))} — stock ${stockOf(p.id)}</option>`).join('');
-  const rows = draftItems.map((it, i) => `
-    <div class="row" style="margin-bottom:8px">
-      <span class="swatch" style="background:${product(it.productId)?.color || '#ccc'}"></span>
-      <select class="grow" onchange="draftItems[${i}].productId=this.value;saveDraftForm();render()">${prodOpts(it.productId)}</select>
-      <input type="number" min="1" inputmode="numeric" value="${it.qty}" style="width:76px" onchange="draftItems[${i}].qty=Number(this.value)">
-      <button class="btn danger small" onclick="draftItems.splice(${i},1);saveDraftForm();render()" aria-label="Quitar">✕</button>
-    </div>`).join('');
   const saved = JSON.parse(sessionStorage.getItem('draftForm') || '{}');
+  const people = data.users.map((u) => `<option value="${u.id}">${esc(u.name)}${u.role === 'admin' ? ' (admin)' : ''}</option>`).join('');
+  const clients = [...data.clients].sort((a, b) => a.name.localeCompare(b.name, 'es'))
+    .map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+  const codes = [...data.products].sort(byCode)
+    .map((p) => `<option value="${esc(p.code)}">${esc(p.name)}${p.colorName ? ' · ' + esc(p.colorName) : ''}</option>`).join('');
+  const rows = draftItems.map((it, i) => {
+    const p = product(it.productId);
+    return `<div class="list-item">
+      <span class="swatch" style="background:${p.color}"></span>
+      <div class="grow"><div><span class="code">${esc(p.code)}</span> <b>${esc(p.name)}</b></div>
+        <div class="muted small">${esc(p.colorName || '')} · stock ${stockOf(p.id)}</div></div>
+      <input type="number" min="1" inputmode="numeric" value="${it.qty}" style="width:72px" onchange="draftItems[${i}].qty=Number(this.value)" aria-label="Cantidad">
+      <button class="btn danger small" onclick="removeDraftItem(${i})" aria-label="Quitar">✕</button>
+    </div>`;
+  }).join('');
 
   shell({
-    title: 'Nueva tarea',
+    title: 'Nuevo trabajo',
     back: '#/tareas',
     tab: '#/tareas',
     body: `
       <form id="f" class="card" onsubmit="return false">
-        <label class="field"><span>Título</span><input name="title" placeholder="Ej: Pedido Carpintería López" value="${esc(saved.title || '')}" required></label>
-        <label class="field"><span>Asignar a</span><select name="assignedTo">${people}</select></label>
+        <div class="field"><span>Cliente</span>
+          <div class="row">
+            <select name="clientId" class="grow"><option value="">Elegí un cliente…</option>${clients}</select>
+            <button type="button" class="btn secondary small" onclick="newClientFromTask()">＋ Nuevo</button>
+          </div>
+        </div>
+        <label class="field"><span>Referencia (opcional)</span><input name="title" placeholder="Ej: Pedido Nº 1002" value="${esc(saved.title || '')}"></label>
+        <label class="field"><span>Lo hace</span><select name="assignedTo">${people}</select></label>
         <label class="field"><span>Indicaciones (opcional)</span><textarea name="notes" placeholder="Ej: dejar en la mesa de despacho">${esc(saved.notes || '')}</textarea></label>
       </form>
       <div class="card">
-        <h2>Productos del pedido</h2>
-        ${rows || '<p class="muted">Sin productos. Podés crear una tarea sin pedido o agregar productos.</p>'}
-        ${data.products.length ? `<button class="btn secondary block" onclick="addDraftItem()">＋ Agregar producto</button>` : '<p class="muted">Primero cargá productos en la pestaña Productos.</p>'}
+        <h2>Productos</h2>
+        ${rows || '<p class="muted" style="margin-top:0">Escribí el código de cada producto y la cantidad.</p>'}
+        <div class="row" style="margin-top:10px">
+          <input id="code" class="grow" list="codes" placeholder="Código (ej: BIS-35)" autocapitalize="characters" autocomplete="off" oninput="previewCode()"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addDraftItem()}" aria-label="Código del producto">
+          <input id="qty" type="number" min="1" inputmode="numeric" value="5" style="width:72px" aria-label="Cantidad"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();addDraftItem()}">
+        </div>
+        <div id="codePreview" class="small" style="min-height:22px;margin:6px 0"></div>
+        <button class="btn secondary block" onclick="addDraftItem()">＋ Agregar producto</button>
+        <datalist id="codes">${codes}</datalist>
       </div>
-      <button class="btn block big" onclick="createTask()">Asignar tarea</button>`,
+      <button class="btn block big" onclick="createTask()">Asignar trabajo</button>`,
   });
-  if (saved.assignedTo) document.querySelector('[name=assignedTo]').value = saved.assignedTo;
-  else {
-    const firstEmp = data.users.find((u) => u.role === 'empleado');
-    if (firstEmp) document.querySelector('[name=assignedTo]').value = firstEmp.id;
-  }
+  const f = document.getElementById('f');
+  if (saved.clientId) f.clientId.value = saved.clientId;
+  const firstEmp = data.users.find((u) => u.role === 'empleado');
+  if (saved.assignedTo) f.assignedTo.value = saved.assignedTo;
+  else if (firstEmp) f.assignedTo.value = firstEmp.id;
 }
 
 function viewPallets(selectedId) {
@@ -327,10 +366,10 @@ function viewPallets(selectedId) {
 
 function viewProducts() {
   if (!isAdmin()) return go('#/tareas');
-  const list = data.products.map((p) => `
-    <div class="list-item" onclick="editProduct('${p.id}')">
+  const list = [...data.products].sort(byCode).map((p) => `
+    <div class="list-item prod" data-search="${esc((p.code + ' ' + p.name + ' ' + p.colorName).toLowerCase())}" onclick="editProduct('${p.id}')">
       <span class="swatch lg" style="background:${p.color}"></span>
-      <div class="grow"><div class="title">${esc(p.name)}</div><div class="muted small">${esc(p.colorName || 'Sin color')}${p.code ? ' · ' + esc(p.code) : ''}</div></div>
+      <div class="grow"><div class="code">${esc(p.code)}</div><div class="title">${esc(p.name)}</div><div class="muted small">${esc(p.colorName || 'Sin color')}</div></div>
       <div class="center"><div style="font-weight:800">${stockOf(p.id)}</div><div class="muted small">stock</div></div>
     </div>`).join('');
   shell({
@@ -338,8 +377,39 @@ function viewProducts() {
     tab: '#/productos',
     body: `
       <button class="btn block" style="margin-bottom:12px" onclick="editProduct()">＋ Nuevo producto</button>
+      <input type="search" placeholder="🔍 Buscar por código o nombre" oninput="filterList(this.value, '.prod')" style="margin-bottom:12px">
       <div class="card">${list || '<div class="empty">Todavía no cargaste productos.</div>'}</div>
-      <p class="muted small center">Cada combinación de producto + color es un producto distinto. El stock se calcula sumando los casilleros de los pallets.</p>`,
+      <p class="muted small center">Cada producto tiene un código único. Si el mismo producto viene en varios colores, cada color lleva su propio código. El stock es la suma de sus casilleros en los pallets.</p>`,
+  });
+}
+
+// Filtra una lista en pantalla sin volver a dibujarla (así no se cierra el teclado).
+function filterList(q, selector) {
+  const words = q.toLowerCase().trim().split(/\s+/);
+  document.querySelectorAll(selector).forEach((el) => {
+    el.style.display = words.every((w) => el.dataset.search.includes(w)) ? '' : 'none';
+  });
+}
+
+// ---------- clientes ----------
+function viewClients() {
+  if (!isAdmin()) return go('#/tareas');
+  const list = [...data.clients].sort((a, b) => a.name.localeCompare(b.name, 'es')).map((c) => {
+    const mine = data.tasks.filter((t) => t.clientId === c.id);
+    const active = mine.filter((t) => t.status !== 'completada').length;
+    return `<div class="list-item cli" data-search="${esc((c.name + ' ' + c.phone + ' ' + c.address).toLowerCase())}" onclick="editClient('${c.id}')">
+      <span class="swatch lg" style="background:#e5e7eb;display:flex;align-items:center;justify-content:center;font-size:22px">🏢</span>
+      <div class="grow"><div class="title">${esc(c.name)}</div><div class="muted small">${esc([c.phone, c.address].filter(Boolean).join(' · ') || 'Sin datos de contacto')}</div></div>
+      <div class="center"><div style="font-weight:800">${active}</div><div class="muted small">activos</div></div>
+    </div>`;
+  }).join('');
+  shell({
+    title: 'Clientes',
+    tab: '#/clientes',
+    body: `
+      <button class="btn block" style="margin-bottom:12px" onclick="editClient()">＋ Nuevo cliente</button>
+      <input type="search" placeholder="🔍 Buscar cliente" oninput="filterList(this.value, '.cli')" style="margin-bottom:12px">
+      <div class="card">${list || '<div class="empty"><div class="ico">🏢</div>Todavía no cargaste clientes.</div>'}</div>`,
   });
 }
 
@@ -350,7 +420,7 @@ function viewEmployees() {
     return `<div class="list-item" onclick="editUser('${u.id}')">
       <span class="swatch lg center" style="background:#e5e7eb;display:flex;align-items:center;justify-content:center;font-size:22px">${u.role === 'admin' ? '🧑‍💼' : '👷'}</span>
       <div class="grow"><div class="title">${esc(u.name)} ${u.role === 'admin' ? '<span class="badge admin">admin</span>' : ''}</div><div class="muted small">usuario: ${esc(u.username)}</div></div>
-      <div class="center"><div style="font-weight:800">${active}</div><div class="muted small">tareas</div></div>
+      <div class="center"><div style="font-weight:800">${active}</div><div class="muted small">trabajos</div></div>
     </div>`;
   }).join('');
   shell({
@@ -402,8 +472,8 @@ function editProduct(id) {
   const m = modal(`
     <h2>${id ? 'Editar producto' : 'Nuevo producto'}</h2>
     <form id="pf">
+      <label class="field"><span>Código (único, es como se pide el producto)</span><input name="code" value="${esc(p.code)}" placeholder="Ej: BIS-35" autocapitalize="characters" autocomplete="off" required style="text-transform:uppercase;font-weight:700"></label>
       <label class="field"><span>Nombre</span><input name="name" value="${esc(p.name)}" placeholder="Ej: Bisagra cazoleta 35mm" required></label>
-      <label class="field"><span>Código (opcional)</span><input name="code" value="${esc(p.code)}" placeholder="Ej: BIS-35"></label>
       <div class="row">
         <label class="field grow"><span>Nombre del color</span><input name="colorName" value="${esc(p.colorName)}" placeholder="Ej: Negro"></label>
         <label class="field" style="width:90px"><span>Color</span><input type="color" name="color" value="${p.color}"></label>
@@ -450,6 +520,40 @@ function editUser(id) {
   });
 }
 
+// Crear o editar un cliente. onCreated(cliente) se llama al crear uno nuevo.
+function editClient(id, onCreated) {
+  const c = id ? clientById(id) : { name: '', phone: '', address: '' };
+  const jobs = id ? data.tasks.filter((t) => t.clientId === id) : [];
+  const m = modal(`
+    <h2>${id ? 'Cliente' : 'Nuevo cliente'}</h2>
+    <form id="cf">
+      <label class="field"><span>Nombre</span><input name="name" value="${esc(c.name)}" placeholder="Ej: Carpintería López" required></label>
+      <label class="field"><span>Teléfono (opcional)</span><input name="phone" type="tel" value="${esc(c.phone)}"></label>
+      <label class="field"><span>Dirección (opcional)</span><input name="address" value="${esc(c.address)}"></label>
+      <button class="btn block">Guardar</button>
+    </form>
+    ${id ? `<h2 style="margin-top:18px">Trabajos de este cliente</h2>
+      ${jobs.map((t) => `<a class="list-item" href="#/tarea/${t.id}"><div class="grow"><b>${esc(t.title || 'Trabajo')}</b>
+        <div class="muted small">👷 ${esc(userName(t.assignedTo))} · ${t.items.length} producto(s) · ${fmtDate(t.createdAt)}</div></div>
+        <span class="badge ${t.status}">${STATUS[t.status]}</span></a>`).join('') || '<p class="muted">Todavía no tiene trabajos.</p>'}
+      <button type="button" class="btn danger block" style="margin-top:14px" id="del">Borrar cliente</button>` : ''}`);
+  m.querySelector('#cf').onsubmit = (e) => {
+    e.preventDefault();
+    const body = Object.fromEntries(new FormData(e.target));
+    closeModal();
+    act(async () => {
+      if (id) return void (await api('PUT', '/api/clients/' + id, body));
+      const created = await api('POST', '/api/clients', body);
+      if (onCreated) onCreated(created);
+    }, 'Cliente guardado');
+  };
+  m.querySelector('#del')?.addEventListener('click', () => {
+    if (!confirm(`¿Borrar el cliente ${c.name}?`)) return;
+    closeModal();
+    act(() => api('DELETE', '/api/clients/' + id), 'Cliente borrado');
+  });
+}
+
 function showCell(palletId, i) {
   const cell = data.pallets.find((p) => p.id === palletId).cells[i];
   const p = cell.productId && product(cell.productId);
@@ -462,27 +566,60 @@ function saveDraftForm() {
   if (f) sessionStorage.setItem('draftForm', JSON.stringify(Object.fromEntries(new FormData(f))));
 }
 
+// Muestra abajo del campo a qué producto corresponde el código que se está escribiendo.
+function previewCode() {
+  const el = document.getElementById('codePreview');
+  const code = document.getElementById('code').value;
+  const p = findByCode(code);
+  if (!code.trim()) el.innerHTML = '';
+  else if (p) el.innerHTML = `<span class="swatch" style="background:${p.color};width:14px;height:14px;display:inline-block;vertical-align:middle"></span> <b>${esc(p.name)}</b> · ${esc(p.colorName || '')} · stock ${stockOf(p.id)}`;
+  else el.innerHTML = '<span style="color:var(--bad)">No existe ningún producto con ese código</span>';
+}
+
 function addDraftItem() {
+  const code = document.getElementById('code').value;
+  const qty = Number(document.getElementById('qty').value);
+  const p = findByCode(code);
+  if (!p) return toast(code.trim() ? `No existe el código ${code.trim().toUpperCase()}` : 'Escribí el código del producto', true);
+  if (!(qty > 0)) return toast('Poné una cantidad', true);
   saveDraftForm();
-  draftItems.push({ productId: data.products[0].id, qty: 5 });
+  const existing = draftItems.find((i) => i.productId === p.id);
+  if (existing) existing.qty += qty;
+  else draftItems.push({ productId: p.id, qty });
+  render();
+  document.getElementById('code').focus();
+}
+
+function removeDraftItem(i) {
+  saveDraftForm();
+  draftItems.splice(i, 1);
   render();
 }
 
+function newClientFromTask() {
+  saveDraftForm();
+  editClient(null, (c) => {
+    const saved = JSON.parse(sessionStorage.getItem('draftForm') || '{}');
+    sessionStorage.setItem('draftForm', JSON.stringify({ ...saved, clientId: c.id }));
+  });
+}
+
 function createTask() {
-  const f = document.getElementById('f');
-  const body = Object.fromEntries(new FormData(f));
-  body.items = draftItems;
+  const body = Object.fromEntries(new FormData(document.getElementById('f')));
+  if (!body.clientId) return toast('Elegí de qué cliente es el trabajo', true);
+  if (!draftItems.length) return toast('Agregá al menos un producto', true);
+  body.items = draftItems.map((i) => ({ code: product(i.productId).code, qty: i.qty }));
   act(async () => {
     const t = await api('POST', '/api/tasks', body);
     draftItems = [];
     sessionStorage.removeItem('draftForm');
     return { goTo: '#/tarea/' + t.id };
-  }, 'Tarea asignada');
+  }, 'Trabajo asignado');
 }
 
 function deleteTask(id) {
-  if (!confirm('¿Borrar esta tarea? (el stock ya descontado no vuelve)')) return;
-  act(async () => { await api('DELETE', '/api/tasks/' + id); return { goTo: '#/tareas' }; }, 'Tarea borrada');
+  if (!confirm('¿Borrar este trabajo? (el stock ya descontado no vuelve)')) return;
+  act(async () => { await api('DELETE', '/api/tasks/' + id); return { goTo: '#/tareas' }; }, 'Trabajo borrado');
 }
 
 function confirmPick(taskId, idx) {
@@ -490,7 +627,7 @@ function confirmPick(taskId, idx) {
 }
 
 function completeTask(id) {
-  act(() => api('POST', `/api/tasks/${id}/complete`), '¡Tarea terminada! 🎉');
+  act(() => api('POST', `/api/tasks/${id}/complete`), '¡Trabajo terminado! 🎉');
 }
 
 function paintCell(palletId, i) {
@@ -539,6 +676,7 @@ function logout(silent) {
   localStorage.removeItem('token');
   clearInterval(pollTimer);
   closeModal();
+  document.getElementById('toast').className = '';
   viewLogin();
 }
 
@@ -555,7 +693,7 @@ function startPolling() {
     // Aviso cuando le llega un pedido nuevo al empleado
     const nuevas = data.tasks.filter((t) => !known.has(t.id) && t.assignedTo === data.me.id);
     if (nuevas.length) {
-      toast(`📦 Te llegó un pedido nuevo: ${nuevas[0].title}`);
+      toast(`📦 Te llegó un trabajo nuevo: ${clientName(nuevas[0])}`);
       if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
     }
     if (JSON.stringify(data) !== before) render();
@@ -572,6 +710,7 @@ function render() {
     case 'nueva-tarea': return viewNewTask();
     case 'pallets': return viewPallets(parts[1]);
     case 'productos': return viewProducts();
+    case 'clientes': return viewClients();
     case 'empleados': return viewEmployees();
     case 'cuenta': return viewAccount();
     default: return viewTasks();

@@ -30,7 +30,22 @@ const { createServer, loadDb } = require('./server');
     const emp = (await call('POST', '/api/users', { username: 'ana', name: 'Ana', password: 'clave1' }, admin)).body;
     const prod = d.products[1];
     const stockBefore = d.pallets[0].cells.filter((c) => c.productId === prod.id).reduce((s, c) => s + c.qty, 0);
-    const task = (await call('POST', '/api/tasks', { title: 'Pedido test', assignedTo: emp.id, items: [{ productId: prod.id, qty: 5 }] }, admin)).body;
+    const cli = d.clients[0].id;
+
+    // Productos por código: obligatorio, único y en mayúsculas
+    assert.strictEqual((await call('POST', '/api/products', { name: 'Sin código' }, admin)).status, 400);
+    assert.strictEqual((await call('POST', '/api/products', { name: 'Repetido', code: prod.code.toLowerCase() }, admin)).status, 400);
+    const nuevo = (await call('POST', '/api/products', { name: 'Tornillo', code: ' tor-440 ' }, admin)).body;
+    assert.strictEqual(nuevo.code, 'TOR-440');
+
+    // Cada trabajo es de un cliente, y los productos se piden por código
+    assert.strictEqual((await call('POST', '/api/tasks', { assignedTo: emp.id, items: [{ code: prod.code, qty: 5 }] }, admin)).status, 400);
+    const noCode = await call('POST', '/api/tasks', { clientId: cli, assignedTo: emp.id, items: [{ code: 'NO-EXISTE', qty: 5 }] }, admin);
+    assert.strictEqual(noCode.status, 400);
+    assert.match(noCode.body.error, /NO-EXISTE/);
+    const task = (await call('POST', '/api/tasks', { clientId: cli, title: 'Pedido test', assignedTo: emp.id, items: [{ code: prod.code.toLowerCase(), qty: 5 }] }, admin)).body;
+    assert.strictEqual(task.items[0].productId, prod.id);
+    assert.strictEqual(task.clientName, d.clients[0].name);
 
     // El empleado entra y solo ve su tarea
     const ana = (await call('POST', '/api/login', { username: 'ana', password: 'clave1' })).body.token;
@@ -55,7 +70,7 @@ const { createServer, loadDb } = require('./server');
     assert.strictEqual(stockAfter, stockBefore - 5);
 
     // Sin stock suficiente no deja agarrar
-    const big = (await call('POST', '/api/tasks', { title: 'Grande', assignedTo: emp.id, items: [{ productId: prod.id, qty: 99999 }] }, admin)).body;
+    const big = (await call('POST', '/api/tasks', { clientId: cli, title: 'Grande', assignedTo: emp.id, items: [{ productId: prod.id, qty: 99999 }] }, admin)).body;
     assert.strictEqual((await call('POST', `/api/tasks/${big.id}/items/0/pick`, null, ana)).status, 400);
 
     // Otro empleado no puede tocar tareas ajenas
@@ -65,7 +80,7 @@ const { createServer, loadDb } = require('./server');
     // Mismo producto dos veces en un pedido: no se superponen casilleros y se agarra lo que se mostró
     const pal = d.pallets[0];
     await call('PUT', `/api/pallets/${pal.id}`, { location: 'Pasillo 3', cells: [0, 1].map((index) => ({ index, productId: prod.id, qty: 4 })) }, admin);
-    const dup = (await call('POST', '/api/tasks', { title: 'Doble', assignedTo: emp.id, items: [{ productId: prod.id, qty: 3 }, { productId: prod.id, qty: 3 }] }, admin)).body;
+    const dup = (await call('POST', '/api/tasks', { clientId: cli, title: 'Doble', assignedTo: emp.id, items: [{ productId: prod.id, qty: 3 }, { productId: prod.id, qty: 3 }] }, admin)).body;
     d = (await call('GET', '/api/data', null, ana)).body;
     assert.strictEqual(d.pallets[0].location, 'Pasillo 3');
     const [p1, p2] = d.tasks.find((t) => t.id === dup.id).items.map((i) => i.plan);
@@ -75,6 +90,13 @@ const { createServer, loadDb } = require('./server');
     assert.deepStrictEqual(picked.items[1].picks, p2.picks);
     d = (await call('GET', '/api/data', null, ana)).body;
     assert.deepStrictEqual(d.tasks.find((t) => t.id === dup.id).items[0].plan.picks, p1.picks);
+
+    // Clientes: no se puede borrar uno con trabajos sin terminar; sí uno sin trabajos
+    assert.strictEqual((await call('DELETE', `/api/clients/${cli}`, null, admin)).status, 400);
+    const otro = (await call('POST', '/api/clients', { name: 'Cliente Nuevo', phone: '123' }, admin)).body;
+    assert.strictEqual((await call('POST', '/api/clients', { name: 'cliente nuevo' }, admin)).status, 400);
+    assert.strictEqual((await call('POST', '/api/clients', { name: 'X' }, ana)).status, 403);
+    assert.strictEqual((await call('DELETE', `/api/clients/${otro.id}`, null, admin)).status, 200);
 
     console.log('OK: todas las pruebas pasaron');
   } finally {

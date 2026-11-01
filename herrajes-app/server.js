@@ -13,7 +13,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const GRID = 3; // pallets de 3x3 (como un tateti)
-const VERSION = '2';
+const VERSION = '3';
 const CELLS = GRID * GRID;
 
 // ---------- utilidades ----------
@@ -57,9 +57,17 @@ function seed() {
   const pallet = { id: newId(), name: 'Pallet A', location: 'Pasillo 1, a la izquierda, al fondo', cells: emptyCells() };
   products.forEach((p, i) => { pallet.cells[i] = { productId: p.id, qty: 50 }; });
 
+  const clients = [
+    ['Carpintería López', '11 4567-8901', 'Av. San Martín 1234'],
+    ['Ferretería Sur', '11 2345-6789', 'Calle 9 Nº 456'],
+    ['Muebles Rivera', '', ''],
+  ].map(([name, phone, address]) => ({ id: newId(), name, phone, address }));
+
   const task = {
     id: newId(),
-    title: 'Pedido de ejemplo - Carpintería López',
+    clientId: clients[0].id,
+    clientName: clients[0].name,
+    title: 'Pedido Nº 1001',
     notes: 'Armar y dejar en la mesa de despacho.',
     assignedTo: juan.id,
     createdAt: new Date().toISOString(),
@@ -71,12 +79,21 @@ function seed() {
     ],
   };
 
-  return { users: [admin, juan], products, pallets: [pallet], tasks: [task] };
+  return { users: [admin, juan], clients, products, pallets: [pallet], tasks: [task] };
 }
 
 function loadDb() {
   if (fs.existsSync(DB_FILE)) {
     db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    db.clients = db.clients || [];
+    // Todo producto necesita un código único: a los que no tienen se les inventa uno.
+    const used = new Set();
+    db.products.forEach((p, i) => {
+      let code = normCode(p.code);
+      if (!code || used.has(code)) { let n = i + 1; do { code = `P-${n++}`; } while (used.has(code)); }
+      p.code = code;
+      used.add(code);
+    });
     // Si los pallets se guardaron con otro tamaño, los adapta al actual (conserva la esquina superior izquierda).
     for (const p of db.pallets) {
       const old = Math.round(Math.sqrt(p.cells.length));
@@ -188,6 +205,22 @@ function requireAdmin(user) {
 const str = (v, max = 200) => String(v ?? '').trim().slice(0, max);
 const int = (v) => Math.max(0, Math.floor(Number(v) || 0));
 
+// Los códigos de producto se guardan en mayúsculas y sin espacios de más: "bis-35 " -> "BIS-35".
+function normCode(v) {
+  return String(v ?? '').trim().toUpperCase().replace(/\s+/g, ' ').slice(0, 30);
+}
+
+function productByCode(code) {
+  const c = normCode(code);
+  return c ? db.products.find((p) => p.code === c) : undefined;
+}
+
+function checkCode(code, exceptId) {
+  if (!code) throw new HttpError(400, 'El código del producto es obligatorio');
+  const other = productByCode(code);
+  if (other && other.id !== exceptId) throw new HttpError(400, `El código ${code} ya lo tiene "${other.name}"`);
+}
+
 function findOr404(list, id, what) {
   const item = list.find((x) => x.id === id);
   if (!item) throw new HttpError(404, `${what} no encontrado`);
@@ -203,6 +236,7 @@ function snapshot(user) {
   return {
     me: publicUser(user),
     users: db.users.map(publicUser),
+    clients: db.clients,
     products: db.products,
     pallets: db.pallets,
     tasks,
@@ -271,10 +305,12 @@ const routes = [
   // --- productos ---
   ['POST', /^\/api\/products$/, async (req, user, _p, body) => {
     requireAdmin(user);
+    const code = normCode(body.code);
+    checkCode(code);
     const name = str(body.name, 80);
     if (!name) throw new HttpError(400, 'Poné un nombre al producto');
     const color = /^#[0-9a-f]{6}$/i.test(body.color) ? body.color : '#9ca3af';
-    const p = { id: newId(), name, code: str(body.code, 30), colorName: str(body.colorName, 30), color };
+    const p = { id: newId(), code, name, colorName: str(body.colorName, 30), color };
     db.products.push(p);
     return p;
   }],
@@ -283,7 +319,11 @@ const routes = [
     requireAdmin(user);
     const p = findOr404(db.products, id, 'Producto');
     if (body.name !== undefined) p.name = str(body.name, 80) || p.name;
-    if (body.code !== undefined) p.code = str(body.code, 30);
+    if (body.code !== undefined) {
+      const code = normCode(body.code);
+      checkCode(code, p.id);
+      p.code = code;
+    }
     if (body.colorName !== undefined) p.colorName = str(body.colorName, 30);
     if (/^#[0-9a-f]{6}$/i.test(body.color)) p.color = body.color;
     return p;
@@ -293,9 +333,43 @@ const routes = [
     requireAdmin(user);
     findOr404(db.products, id, 'Producto');
     const used = db.tasks.some((t) => t.status !== 'completada' && t.items.some((i) => i.productId === id));
-    if (used) throw new HttpError(400, 'Ese producto está en una tarea sin terminar');
+    if (used) throw new HttpError(400, 'Ese producto está en un trabajo sin terminar');
     db.products = db.products.filter((p) => p.id !== id);
     for (const pal of db.pallets) for (const c of pal.cells) if (c.productId === id) { c.productId = null; c.qty = 0; }
+    return { ok: true };
+  }],
+
+  // --- clientes ---
+  ['POST', /^\/api\/clients$/, async (req, user, _p, body) => {
+    requireAdmin(user);
+    const name = str(body.name, 80);
+    if (!name) throw new HttpError(400, 'Poné el nombre del cliente');
+    if (db.clients.some((c) => c.name.toLowerCase() === name.toLowerCase())) throw new HttpError(400, 'Ya hay un cliente con ese nombre');
+    const c = { id: newId(), name, phone: str(body.phone, 40), address: str(body.address, 120) };
+    db.clients.push(c);
+    return c;
+  }],
+
+  ['PUT', /^\/api\/clients\/(\w+)$/, async (req, user, [id], body) => {
+    requireAdmin(user);
+    const c = findOr404(db.clients, id, 'Cliente');
+    if (body.name !== undefined) {
+      const name = str(body.name, 80);
+      if (!name) throw new HttpError(400, 'Poné el nombre del cliente');
+      if (db.clients.some((x) => x.id !== id && x.name.toLowerCase() === name.toLowerCase())) throw new HttpError(400, 'Ya hay un cliente con ese nombre');
+      c.name = name;
+      for (const t of db.tasks) if (t.clientId === id) t.clientName = name;
+    }
+    if (body.phone !== undefined) c.phone = str(body.phone, 40);
+    if (body.address !== undefined) c.address = str(body.address, 120);
+    return c;
+  }],
+
+  ['DELETE', /^\/api\/clients\/(\w+)$/, async (req, user, [id]) => {
+    requireAdmin(user);
+    findOr404(db.clients, id, 'Cliente');
+    if (db.tasks.some((t) => t.clientId === id && t.status !== 'completada')) throw new HttpError(400, 'Ese cliente tiene trabajos sin terminar');
+    db.clients = db.clients.filter((c) => c.id !== id);
     return { ok: true };
   }],
 
@@ -334,15 +408,22 @@ const routes = [
   // --- tareas / pedidos ---
   ['POST', /^\/api\/tasks$/, async (req, user, _p, body) => {
     requireAdmin(user);
-    const title = str(body.title, 120);
-    if (!title) throw new HttpError(400, 'Poné un título a la tarea');
+    const client = db.clients.find((c) => c.id === body.clientId);
+    if (!client) throw new HttpError(400, 'Elegí de qué cliente es el trabajo');
     const assignee = db.users.find((u) => u.id === body.assignedTo);
-    if (!assignee) throw new HttpError(400, 'Elegí a quién se la asignás');
-    const items = (Array.isArray(body.items) ? body.items : [])
-      .map((i) => ({ productId: i.productId, qty: int(i.qty), picked: false, picks: [] }))
-      .filter((i) => i.qty > 0 && db.products.some((p) => p.id === i.productId));
+    if (!assignee) throw new HttpError(400, 'Elegí qué empleado lo hace');
+    // Cada producto se pide por código (también se acepta el id interno)
+    const items = (Array.isArray(body.items) ? body.items : []).map((i) => {
+      const p = i.code !== undefined ? productByCode(i.code) : db.products.find((x) => x.id === i.productId);
+      if (!p) throw new HttpError(400, `No existe ningún producto con el código ${normCode(i.code) || '(vacío)'}`);
+      const qty = int(i.qty);
+      if (qty <= 0) throw new HttpError(400, `Poné una cantidad para ${p.code}`);
+      return { productId: p.id, qty, picked: false, picks: [] };
+    });
+    if (!items.length) throw new HttpError(400, 'Agregá al menos un producto');
     const t = {
-      id: newId(), title, notes: str(body.notes, 1000), assignedTo: assignee.id,
+      id: newId(), clientId: client.id, clientName: client.name, title: str(body.title, 120),
+      notes: str(body.notes, 1000), assignedTo: assignee.id,
       createdAt: new Date().toISOString(), status: 'pendiente', items,
     };
     db.tasks.unshift(t);
@@ -351,14 +432,14 @@ const routes = [
 
   ['DELETE', /^\/api\/tasks\/(\w+)$/, async (req, user, [id]) => {
     requireAdmin(user);
-    findOr404(db.tasks, id, 'Tarea');
+    findOr404(db.tasks, id, 'Trabajo');
     db.tasks = db.tasks.filter((t) => t.id !== id);
     return { ok: true };
   }],
 
   ['POST', /^\/api\/tasks\/(\w+)\/items\/(\d+)\/pick$/, async (req, user, [id, idx]) => {
     const t = taskFor(user, id);
-    if (t.status === 'completada') throw new HttpError(400, 'La tarea ya está completada');
+    if (t.status === 'completada') throw new HttpError(400, 'El trabajo ya está terminado');
     const item = t.items[Number(idx)];
     if (!item) throw new HttpError(404, 'Ítem no encontrado');
     if (item.picked) throw new HttpError(400, 'Ese producto ya fue agarrado');
@@ -393,8 +474,8 @@ const routes = [
 ];
 
 function taskFor(user, id) {
-  const t = findOr404(db.tasks, id, 'Tarea');
-  if (user.role !== 'admin' && t.assignedTo !== user.id) throw new HttpError(403, 'Esta tarea no es tuya');
+  const t = findOr404(db.tasks, id, 'Trabajo');
+  if (user.role !== 'admin' && t.assignedTo !== user.id) throw new HttpError(403, 'Este trabajo no es tuyo');
   return t;
 }
 

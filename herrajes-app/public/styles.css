@@ -66,8 +66,8 @@ main { padding: 14px 14px calc(90px + env(safe-area-inset-bottom)); max-width: 6
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn.big { min-height: 58px; font-size: 18px; }
 
-label.field { display: block; margin-bottom: 12px; }
-label.field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.field { display: block; margin-bottom: 12px; }
+.field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
 input, select, textarea {
   width: 100%; padding: 12px; border: 1px solid #d1d5db; border-radius: 10px; background: #fff; min-height: 46px;
 }
@@ -134,7 +134,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); bo
 #toast {
   position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px);
   background: #111827; color: #fff; padding: 10px 16px; border-radius: 12px; opacity: 0; pointer-events: none;
-  transition: .25s; z-index: 50; max-width: 90vw; text-align: center;
+  transition: opacity .25s, transform .25s; z-index: 50; max-width: 90vw; text-align: center;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 #toast.error { background: var(--bad); }
@@ -169,3 +169,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); bo
 .pallet.picking .cell.hl { transform: scale(1.06); }
 .cell.hl::after { font-size: 18px; line-height: 28px; padding: 0 12px; }
 .cell.hl::after { white-space: nowrap; }
+
+/* ---------- códigos de producto y cliente ---------- */
+.code {
+  display: inline-block; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-weight: 800;
+  background: #1f2937; color: #fff; border-radius: 6px; padding: 1px 7px; font-size: 13px; letter-spacing: .3px;
+}
+.code.big { font-size: 17px; padding: 2px 9px; margin-bottom: 3px; }
+.client-box { background: #f3f4f6; border-radius: 10px; padding: 10px 12px; margin: 10px 0; }
+.client-box .client-name { font-size: 19px; font-weight: 800; }
+.client-box a { color: inherit; }
+.tabs a { font-size: 11px; }
