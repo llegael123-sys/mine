@@ -1,6 +1,22 @@
 @echo off
 cd /d "%~dp0"
-echo Iniciando la app de Herrajes...
-echo Abri en el celular la direccion "Red local" que aparece abajo.
+
+where node >nul 2>nul
+if errorlevel 1 (
+  echo.
+  echo  Falta instalar Node.js. Se va a abrir la pagina para descargarlo.
+  echo  Instalalo apretando Siguiente en todo y despues volve a abrir este archivo.
+  echo.
+  start https://nodejs.org/es/download
+  pause
+  exit /b
+)
+
+echo.
+echo  Iniciando la app de Herrajes...
+echo  NO CIERRES ESTA VENTANA mientras usen la app.
+echo  En el celular abri la direccion que dice "Red local".
+echo.
+start /b "" cmd /c "timeout /t 2 /nobreak >nul && start http://localhost:3000"
 node server.js
 pause
